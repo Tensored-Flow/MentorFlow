@@ -8,16 +8,24 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from flask import Flask, render_template, jsonify, request
+import os
 import numpy as np
 import json
 import threading
 import time
+import random
 
 from tasks.task_generator import (
     generate_task, generate_task_by_arm, generate_eval_dataset,
     FAMILY_NAMES, DIFFICULTY_NAMES, arm_to_name, NUM_FAMILIES, NUM_DIFFICULTIES
 )
-from training.training_loop import MetaTrainer, MetaTrainingConfig
+from training.training_loop import (
+    MetaTrainer,
+    MetaTrainingConfig,
+    run_random_curriculum,
+    run_fixed_curriculum,
+)
+from student.ppo_agent import StudentAgent
 from teacher.teacher_bandit import BanditStrategy
 
 app = Flask(__name__)
@@ -32,9 +40,75 @@ training_state = {
     "selected_arms": [],
     "arm_names": [],
     "curriculum_heatmap": np.zeros((NUM_FAMILIES, NUM_DIFFICULTIES)).tolist(),
+    "selection_timeline": [],
     "final_accuracy": 0,
     "current_task": None,
+    "baseline_random": None,
+    "baseline_fixed": None,
 }
+
+CACHE_DIR = (Path(__file__).parent / "cache").resolve()
+CACHE_PATH = CACHE_DIR / "last_run.json"
+
+
+def _build_training_response(state: Dict[str, Any]) -> Dict[str, Any]:
+    arm_labels = [arm_to_name(i) for i in range(NUM_FAMILIES * NUM_DIFFICULTIES)]
+
+    teacher_payload = {
+        "accuracies": state.get("accuracies", []),
+        "rewards": state.get("rewards", []),
+        "selected_arms": state.get("selected_arms", []),
+        "arm_names": state.get("arm_names", []),
+        "final_accuracy": state.get("final_accuracy", 0.0),
+        "current_task": state.get("current_task"),
+        "heatmap": {
+            "num_arms": NUM_FAMILIES * NUM_DIFFICULTIES,
+            "num_steps": state.get("total_steps", 0),
+            "timeline": _to_list(state.get("selection_timeline", [])),
+            "cumulative": _to_list(state.get("curriculum_heatmap", [])),
+            "arm_labels": arm_labels,
+        },
+        "metadata": {
+            "step": state.get("step", 0),
+            "total_steps": state.get("total_steps", 0),
+            "running": state.get("running", False),
+        },
+    }
+
+    def build_baseline(key: str) -> Dict[str, Any]:
+        data = state.get(key)
+        if not data:
+            return {}
+        accuracies = data.get("accuracy") or data.get("accuracies") or []
+        return {
+            "accuracies": accuracies,
+            "rewards": [],
+            "selected_arms": data.get("arms", []),
+            "final_accuracy": accuracies[-1] if accuracies else 0.0,
+            "heatmap": {
+                "num_arms": NUM_FAMILIES * NUM_DIFFICULTIES,
+                "num_steps": data.get("meta_steps", 0),
+                "timeline": _to_list(data.get("heatmap", [])),
+                "arm_labels": arm_labels,
+            },
+            "metadata": {
+                "step": len(accuracies),
+                "total_steps": data.get("meta_steps", 0),
+                "running": False,
+            },
+        }
+
+    return {
+        "teacher": teacher_payload,
+        "baseline_random": build_baseline("baseline_random"),
+        "baseline_fixed": build_baseline("baseline_fixed"),
+    }
+
+
+def _to_list(value: Any) -> Any:
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    return value
 
 
 @app.route('/')
@@ -99,6 +173,15 @@ def start_training():
     data = request.json or {}
     num_steps = data.get('num_steps', 50)
     strategy = data.get('strategy', 'ucb1')
+    replay_mode = bool(data.get('replay_mode'))
+
+    # Replay from cache if available
+    if replay_mode:
+        if CACHE_PATH.exists():
+            with open(CACHE_PATH, 'r') as f:
+                cached = json.load(f)
+            return jsonify(cached)
+        return jsonify({"error": "No cached run available."}), 404
     
     # Map strategy string to enum
     strategy_map = {
@@ -109,6 +192,7 @@ def start_training():
     }
     
     # Reset state
+    num_arms = NUM_FAMILIES * NUM_DIFFICULTIES  # 15 arms
     training_state = {
         "running": True,
         "step": 0,
@@ -118,8 +202,11 @@ def start_training():
         "selected_arms": [],
         "arm_names": [],
         "curriculum_heatmap": np.zeros((NUM_FAMILIES, NUM_DIFFICULTIES)).tolist(),
+        "selection_timeline": np.zeros((num_arms, num_steps), dtype=int).tolist(),  # [arm_id][step] = 1 if selected
         "final_accuracy": 0,
         "current_task": None,
+        "baseline_random": None,
+        "baseline_fixed": None,
     }
     
     # Start training in background thread
@@ -174,19 +261,68 @@ def start_training():
                 training_state["selected_arms"].append(int(arm_id))
                 training_state["arm_names"].append(arm_name)
                 
-                # Update heatmap
+                # Update heatmap (cumulative counts)
                 family_id = arm_id // NUM_DIFFICULTIES
                 difficulty_id = arm_id % NUM_DIFFICULTIES
                 heatmap = np.array(training_state["curriculum_heatmap"])
                 heatmap[family_id, difficulty_id] += 1
                 training_state["curriculum_heatmap"] = heatmap.tolist()
                 
+                # Update selection timeline: [arm_id][step] = 1
+                timeline = training_state["selection_timeline"]
+                timeline[arm_id][step] = 1
+                
                 training_state["final_accuracy"] = float(acc_after)
                 
                 print(f"Step {step+1}/{num_steps} | Acc: {acc_after:.2%} | Arm: {arm_name}")
             
+            # Teacher training complete
+            print("Teacher training complete!")
+            
+            # Run random curriculum baseline using helper
+            baseline_agent = StudentAgent(
+                learning_rate=config.learning_rate,
+                n_steps=config.ppo_n_steps,
+                batch_size=config.ppo_batch_size,
+                seed=config.seed + 101,
+                verbose=0
+            )
+            baseline_rng = random.Random(config.seed + 999)
+            baseline_result = run_random_curriculum(
+                meta_steps=num_steps,
+                model=baseline_agent,
+                env={"train_steps": config.student_train_steps},
+                eval_set=trainer.eval_tasks,
+                num_arms=num_arms,
+                rng=baseline_rng,
+            )
+            training_state["baseline_random"] = baseline_result
+            
+            # Run fixed curriculum baseline using helper
+            fixed_agent = StudentAgent(
+                learning_rate=config.learning_rate,
+                n_steps=config.ppo_n_steps,
+                batch_size=config.ppo_batch_size,
+                seed=config.seed + 202,
+                verbose=0
+            )
+            fixed_result = run_fixed_curriculum(
+                meta_steps=num_steps,
+                model=fixed_agent,
+                env={"train_steps": config.student_train_steps},
+                eval_set=trainer.eval_tasks,
+                num_arms=num_arms,
+            )
+            training_state["baseline_fixed"] = fixed_result
+            
             training_state["running"] = False
-            print("Training complete!")
+            print("Baseline complete!")
+
+            # Persist snapshot for replay mode
+            snapshot = _build_training_response(training_state)
+            os.makedirs(CACHE_DIR, exist_ok=True)
+            with open(CACHE_PATH, 'w') as f:
+                json.dump(snapshot, f)
             
         except Exception as e:
             import traceback
@@ -195,8 +331,9 @@ def start_training():
             training_state["error"] = str(e)
             print(f"Training error: {e}")
     
-    thread = threading.Thread(target=train_background)
-    thread.start()
+    # Start teacher thread
+    teacher_thread = threading.Thread(target=train_background)
+    teacher_thread.start()
     
     return jsonify({"status": "started", "num_steps": num_steps})
 
@@ -211,8 +348,8 @@ def stop_training():
 
 @app.route('/api/train/status')
 def training_status():
-    """Get training status."""
-    return jsonify(training_state)
+    """Get structured results for teacher + baselines."""
+    return jsonify(_build_training_response(training_state))
 
 
 @app.route('/api/families')
@@ -232,9 +369,10 @@ def get_families():
 
 
 if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5050))
     print("=" * 60)
     print("TeachRL Demo Server")
     print("=" * 60)
-    print("Open http://localhost:5000 in your browser")
+    print(f"Open http://localhost:{port} in your browser")
     print("=" * 60)
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=port)

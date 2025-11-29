@@ -1,2 +1,21 @@
+# Python
 __pycache__/
+*.pyc
 venv/
+.env
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+dist/
+.env.local
+
+# RL training outputs
+checkpoints/
+runs/
+artifacts/
+wandb/
+
+# OS
+.DS_Store

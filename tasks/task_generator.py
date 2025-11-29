@@ -9,12 +9,31 @@ from dataclasses import dataclass
 from typing import List, Tuple, Callable
 
 # Constants
-NUM_FAMILIES = 5
+NUM_FAMILIES = 18
 NUM_DIFFICULTIES = 3
 NUM_CHOICES = 4
 OBS_VEC_SIZE = 32  # Fixed observation vector size
 
-FAMILY_NAMES = ["var_trace", "if_cond", "loop_count", "list_index", "bool_logic"]
+FAMILY_NAMES = [
+    "var_trace",
+    "if_cond",
+    "loop_count",
+    "list_index",
+    "bool_logic",
+    "python_syntax",
+    "java_syntax",
+    "js_syntax",
+    "cpp_syntax",
+    "rust_syntax",
+    "sql_syntax",
+    "html_css",
+    "bash_syntax",
+    "regex",
+    "math_algebra",
+    "physics_kinematics",
+    "chemistry",
+    "probability",
+]
 DIFFICULTY_NAMES = ["easy", "medium", "hard"]
 
 
@@ -309,6 +328,614 @@ def generate_bool_logic(difficulty: int, rng: random.Random) -> TaskSpec:
 
 
 # =============================================================================
+# FAMILY 5: python_syntax — Python syntax and behaviour
+# =============================================================================
+
+def generate_python_syntax(difficulty: int, rng: random.Random) -> TaskSpec:
+    """
+    New task family: Python syntax and behaviour.
+    """
+    if difficulty == 0:  # Easy
+        lst = [rng.randint(1, 9) for _ in range(5)]
+        idx = rng.randint(0, 4)
+        result = lst[idx]
+        prompt = f"lst = {lst}\nWhat is lst[{idx}]?"
+        encoding = lst + [idx, 0, 0]
+
+    elif difficulty == 1:  # Medium
+        x = rng.choice([0, 1, [], [1], "", "hi"])
+        prompt = f"In Python, what is the truth value of: {x} ?"
+        result = bool(x)
+        encoding = [len(str(x)), int(bool(x)), 0, 0]
+
+    else:  # Hard
+        lst = [rng.randint(1, 9) for _ in range(7)]
+        start = rng.randint(-5, 2)
+        end = rng.randint(3, 7)
+        sliced = lst[start:end]
+        result = sliced[-1] if sliced else None
+        prompt = f"lst = {lst}\nWhat is lst[{start}:{end}][-1]?"
+        encoding = lst[:7] + [start, end]
+
+    correct = result
+    base_val = correct if isinstance(correct, int) else 1
+    distractors = _generate_numeric_distractors(base_val, rng, 3)
+    choices, correct_idx = _shuffle_with_correct(correct, distractors, rng)
+
+    obs_vec = _build_obs_vec(5, difficulty, encoding)
+    choices_vec = [float(x) if isinstance(x, int) else -1.0 for x in choices]
+
+    return TaskSpec(
+        family_id=5,
+        difficulty_id=difficulty,
+        obs_vec=obs_vec,
+        correct_action=correct_idx,
+        choices_vec=choices_vec,
+        human_prompt=prompt,
+        human_choices=[str(c) for c in choices]
+    )
+
+
+# =============================================================================
+# FAMILY 6: java_syntax — Java syntax and evaluation
+# =============================================================================
+
+def generate_java_syntax(difficulty: int, rng: random.Random) -> TaskSpec:
+    """
+    Java syntax + evaluation tasks.
+    """
+    if difficulty == 0:
+        a = rng.randint(1, 9)
+        b = rng.randint(1, 9)
+        result = a + b
+        prompt = f"int a = {a};\nint b = {b};\nSystem.out.println(a + b);\nWhat is printed?"
+        encoding = [a, b, 0, 0, 0, 0, 0, 0]
+
+    elif difficulty == 1:
+        x = rng.randint(1, 10)
+        y = rng.randint(1, 10)
+        result = x > y
+        prompt = f"int x = {x};\nint y = {y};\nSystem.out.println(x > y);\nWhat is printed?"
+        encoding = [x, y, 1, 0, 0, 0, 0, 0]
+
+    else:
+        x = rng.randint(1, 5)
+        y = rng.randint(1, 5)
+        z = rng.randint(1, 5)
+        result = x + y * z
+        prompt = f"int x={x}, y={y}, z={z};\nSystem.out.println(x + y * z);\nWhat is printed?"
+        encoding = [x, y, z, 2, 0, 0, 0, 0]
+
+    correct = result
+    base_val = correct if isinstance(correct, int) else 0
+    distractors = _generate_numeric_distractors(base_val, rng, 3)
+    choices, correct_idx = _shuffle_with_correct(correct, distractors, rng)
+
+    obs_vec = _build_obs_vec(6, difficulty, encoding)
+
+    return TaskSpec(
+        family_id=6,
+        difficulty_id=difficulty,
+        obs_vec=obs_vec,
+        correct_action=correct_idx,
+        choices_vec=[float(c) if isinstance(c, (int, float)) else -1.0 for c in choices],
+        human_prompt=prompt,
+        human_choices=[str(c) for c in choices]
+    )
+
+
+# =============================================================================
+# FAMILY 7: js_syntax — JavaScript coercion and behavior
+# =============================================================================
+
+def generate_js_syntax(difficulty: int, rng: random.Random) -> TaskSpec:
+    """JavaScript behavior tasks."""
+    if difficulty == 0:
+        a = rng.randint(1, 9)
+        b = rng.randint(1, 9)
+        result = a + b
+        prompt = f"let a = {a};\nlet b = {b};\nconsole.log(a + b);"
+        encoding = [a, b, 0, 0, 0, 0, 0, 0]
+
+    elif difficulty == 1:
+        a = rng.randint(1, 9)
+        b = rng.choice(["'5'", "'3'"])
+        result = str(a) + eval(b)
+        prompt = f"let a = {a};\nlet b = {b};\nconsole.log(a + b);"
+        encoding = [a, len(b), 1, 0, 0, 0, 0, 0]
+
+    else:
+        prompt = "console.log([] == 0);"
+        result = True
+        encoding = [3, 3, 3, 3, 3, 3, 3, 3]
+
+    correct = str(result).lower() if isinstance(result, bool) else result
+    distractors = ["true", "false", "undefined", "NaN"]
+    choices, correct_idx = _shuffle_with_correct(correct, distractors, rng)
+
+    obs_vec = _build_obs_vec(7, difficulty, encoding)
+
+    return TaskSpec(
+        family_id=7,
+        difficulty_id=difficulty,
+        obs_vec=obs_vec,
+        correct_action=correct_idx,
+        choices_vec=[1.0, 0.0, -1.0, -2.0],
+        human_prompt=prompt,
+        human_choices=["true", "false", "undefined", "NaN"]
+    )
+
+
+# =============================================================================
+# FAMILY 8: cpp_syntax — C++ syntax and semantics
+# =============================================================================
+
+def generate_cpp_syntax(difficulty: int, rng: random.Random) -> TaskSpec:
+    """C++ pointer/reference and precedence tasks."""
+    family_id = 8
+    if difficulty == 0:
+        a = rng.randint(1, 9)
+        b = rng.randint(1, 9)
+        result = a + b
+        prompt = f"int a = {a};\nint b = {b};\ncout << a + b;"
+        encoding = [a, b, 0, 0, 0, 0, 0, 0]
+
+    elif difficulty == 1:
+        a = rng.randint(1, 9)
+        result = a
+        prompt = f"int a = {a};\nint &b = a;\ncout << b;"
+        encoding = [a, a, 1, 0, 0, 0, 0, 0]
+
+    else:
+        a = rng.randint(1, 9)
+        result = a
+        prompt = "int a = {0};\nint *p = &a;\ncout << *p;".format(a)
+        encoding = [a, 0, 2, 0, 0, 0, 0, 0]
+
+    correct = result
+    distractors = _generate_numeric_distractors(correct, rng, 3)
+    choices, idx = _shuffle_with_correct(correct, distractors, rng)
+
+    obs_vec = _build_obs_vec(family_id, difficulty, encoding)
+
+    return TaskSpec(
+        family_id=family_id,
+        difficulty_id=difficulty,
+        obs_vec=obs_vec,
+        correct_action=idx,
+        choices_vec=[float(c) for c in choices],
+        human_prompt=prompt,
+        human_choices=[str(c) for c in choices]
+    )
+
+
+# =============================================================================
+# FAMILY 10: sql_syntax — SQL SELECT/WHERE/COUNT
+# =============================================================================
+
+def generate_sql_syntax(difficulty: int, rng: random.Random) -> TaskSpec:
+    family_id = 10
+    if difficulty == 0:
+        result = 3
+        prompt = (
+            "Table users:\n"
+            "id | age\n"
+            "1  | 20\n"
+            "2  | 25\n"
+            "3  | 30\n\n"
+            "What does SELECT COUNT(*) FROM users; return?"
+        )
+        encoding = [3, 0, 0, 0, 0, 0, 0, 0]
+
+    elif difficulty == 1:
+        result = 2
+        prompt = (
+            "Table users:\n"
+            "id | age\n"
+            "1  | 20\n"
+            "2  | 25\n"
+            "3  | 30\n\n"
+            "What does SELECT COUNT(*) FROM users WHERE age > 20; return?"
+        )
+        encoding = [2, 0, 1, 0, 0, 0, 0, 0]
+
+    else:
+        result = 30
+        prompt = (
+            "Table salaries:\n"
+            "id | income\n"
+            "1  | 10\n"
+            "2  | 20\n"
+            "3  | 30\n"
+            "What does SELECT MAX(income) FROM salaries; return?"
+        )
+        encoding = [30, 0, 2, 0, 0, 0, 0, 0]
+
+    distractors = _generate_numeric_distractors(result, rng, 3)
+    choices, idx = _shuffle_with_correct(result, distractors, rng)
+
+    obs_vec = _build_obs_vec(family_id, difficulty, encoding)
+    return TaskSpec(
+        family_id=family_id,
+        difficulty_id=difficulty,
+        obs_vec=obs_vec,
+        correct_action=idx,
+        choices_vec=[float(c) for c in choices],
+        human_prompt=prompt,
+        human_choices=[str(c) for c in choices]
+    )
+
+
+# =============================================================================
+# FAMILY 9: rust_syntax — Rust ownership and borrowing
+# =============================================================================
+
+def generate_rust_syntax(difficulty: int, rng: random.Random) -> TaskSpec:
+    family_id = 9
+    if difficulty == 0:
+        x = rng.randint(1, 9)
+        result = x
+        prompt = f"let x = {x};\nprintln!(\"{{}}\", x);"
+        encoding = [x, 0, 0, 0, 0, 0, 0, 0]
+
+    elif difficulty == 1:
+        x = rng.randint(1, 9)
+        result = x
+        prompt = (
+            f"let x = {x};\n"
+            f"let y = &x;\n"
+            f"println!(\"{{}}\", *y);"
+        )
+        encoding = [x, 0, 1, 0, 0, 0, 0, 0]
+
+    else:
+        x = rng.randint(1, 9)
+        result = x + 1
+        prompt = (
+            f"let mut x = {x};\n"
+            f"let y = &mut x;\n"
+            f"*y += 1;\n"
+            f"println!(\"{{}}\", x);"
+        )
+        encoding = [x, 0, 2, 0, 0, 0, 0, 0]
+
+    correct = result
+    distractors = _generate_numeric_distractors(correct, rng, 3)
+    choices, idx = _shuffle_with_correct(correct, distractors, rng)
+
+    obs_vec = _build_obs_vec(family_id, difficulty, encoding)
+
+    return TaskSpec(
+        family_id=family_id,
+        difficulty_id=difficulty,
+        obs_vec=obs_vec,
+        correct_action=idx,
+        choices_vec=[float(c) for c in choices],
+        human_prompt=prompt,
+        human_choices=[str(c) for c in choices]
+    )
+
+
+# =============================================================================
+# FAMILY 11: html_css — HTML tags and CSS specificity
+# =============================================================================
+
+def generate_html_css(difficulty: int, rng: random.Random) -> TaskSpec:
+    family_id = 11
+    if difficulty == 0:
+        prompt = "<p>Hello</p>\nWhat tag is used here?"
+        choices = ["p", "div", "span", "h1"]
+        correct_idx = 0
+        encoding = [1, 0, 0, 0, 0, 0, 0, 0]
+
+        obs_vec = _build_obs_vec(family_id, difficulty, encoding)
+        return TaskSpec(
+            family_id=family_id,
+            difficulty_id=difficulty,
+            obs_vec=obs_vec,
+            correct_action=correct_idx,
+            choices_vec=[1.0, 0.0, -1.0, -2.0],
+            human_prompt=prompt,
+            human_choices=choices
+        )
+
+    elif difficulty == 1:
+        prompt = (
+            "#id {\n  color: red;\n}\n"
+            ".class {\n  color: blue;\n}\n"
+            "<p id='x' class='y'>Hello</p>\n"
+            "What color is the text?"
+        )
+        choices = ["red", "blue", "black", "inherit"]
+        correct_idx = 0
+        encoding = [2, 0, 1, 0, 0, 0, 0, 0]
+
+        obs_vec = _build_obs_vec(family_id, difficulty, encoding)
+        return TaskSpec(
+            family_id=family_id,
+            difficulty_id=difficulty,
+            obs_vec=obs_vec,
+            correct_action=correct_idx,
+            choices_vec=[1.0, 0.0, -1.0, -2.0],
+            human_prompt=prompt,
+            human_choices=choices
+        )
+
+    else:
+        prompt = "<div><span>Hello</span></div>\nHow many elements are there?"
+        result = 2
+        distractors = _generate_numeric_distractors(result, rng, 3)
+        choices, correct_idx = _shuffle_with_correct(result, distractors, rng)
+        encoding = [2, 0, 2, 0, 0, 0, 0, 0]
+
+        obs_vec = _build_obs_vec(family_id, difficulty, encoding)
+        return TaskSpec(
+            family_id=family_id,
+            difficulty_id=difficulty,
+            obs_vec=obs_vec,
+            correct_action=correct_idx,
+            choices_vec=[float(c) for c in choices],
+            human_prompt=prompt,
+            human_choices=[str(c) for c in choices]
+        )
+
+
+# =============================================================================
+# FAMILY 12: bash_syntax — Bash commands and redirection
+# =============================================================================
+
+def generate_bash_syntax(difficulty: int, rng: random.Random) -> TaskSpec:
+    family_id = 12
+    if difficulty == 0:
+        prompt = "What does 'echo 5' print?"
+        result = 5
+        encoding = [5, 0, 0, 0, 0, 0, 0, 0]
+        distractors = _generate_numeric_distractors(result, rng, 3)
+        choices, idx = _shuffle_with_correct(result, distractors, rng)
+        choices_vec = [float(c) for c in choices]
+        human_choices = [str(c) for c in choices]
+
+    elif difficulty == 1:
+        prompt = "What does 'echo hello > out.txt' do?"
+        choices = ["writes to file", "prints hello", "deletes file", "errors"]
+        idx = 0
+        encoding = [1, 0, 0, 0, 0, 0, 0, 0]
+        choices_vec = [1.0, 0.0, -1.0, -2.0]
+        human_choices = choices
+
+    else:
+        prompt = "What does 'cat file | grep hi' do?"
+        choices = ["filter lines", "count lines", "delete lines", "overwrite file"]
+        idx = 0
+        encoding = [2, 0, 1, 0, 0, 0, 0, 0]
+        choices_vec = [1.0, 0.0, -1.0, -2.0]
+        human_choices = choices
+
+    obs_vec = _build_obs_vec(family_id, difficulty, encoding)
+    return TaskSpec(
+        family_id=family_id,
+        difficulty_id=difficulty,
+        obs_vec=obs_vec,
+        correct_action=idx,
+        choices_vec=choices_vec,
+        human_prompt=prompt,
+        human_choices=human_choices
+    )
+
+
+# =============================================================================
+# FAMILY 13: regex — Regular expression reasoning
+# =============================================================================
+
+def generate_regex(difficulty: int, rng: random.Random) -> TaskSpec:
+    family_id = 13
+    if difficulty == 0:
+        prompt = "Regex: ^a.$\nDoes it match 'ab'?"
+        encoding = [1, 0, 0, 0, 0, 0, 0, 0]
+        idx = 0
+        choices = ["True", "False", "Error", "None"]
+    elif difficulty == 1:
+        prompt = "Regex: [0-9]{2}\nDoes it match '5'?"
+        encoding = [2, 0, 1, 0, 0, 0, 0, 0]
+        idx = 1
+        choices = ["True", "False", "Error", "None"]
+    else:
+        prompt = "Regex: ^ab|cd$\nWhat matches?"
+        encoding = [4, 0, 2, 0, 0, 0, 0, 0]
+        idx = 0
+        choices = ["ab", "cd", "abc", "bcd"]
+
+    obs_vec = _build_obs_vec(family_id, difficulty, encoding)
+    return TaskSpec(
+        family_id=family_id,
+        difficulty_id=difficulty,
+        obs_vec=obs_vec,
+        correct_action=idx,
+        choices_vec=[1.0, 0.0, -1.0, -2.0],
+        human_prompt=prompt,
+        human_choices=choices,
+    )
+
+
+# =============================================================================
+# FAMILY 14: math_algebra — arithmetic expressions
+# =============================================================================
+
+def generate_math_algebra(difficulty: int, rng: random.Random) -> TaskSpec:
+    family_id = 14
+    if difficulty == 0:
+        a = rng.randint(1, 5)
+        b = rng.randint(1, 5)
+        result = a + b
+        prompt = f"What is {a}+{b}?"
+        encoding = [a, b, 0, 0, 0, 0, 0, 0]
+    elif difficulty == 1:
+        a = rng.randint(1, 5)
+        b = rng.randint(1, 5)
+        result = a * b
+        prompt = f"What is {a}*{b}?"
+        encoding = [a, b, 1, 0, 0, 0, 0, 0]
+    else:
+        a = rng.randint(1, 5)
+        b = rng.randint(1, 5)
+        c = rng.randint(1, 5)
+        result = a * b + c
+        prompt = f"What is {a}*{b}+{c}?"
+        encoding = [a, b, c, 2, 0, 0, 0, 0]
+
+    distractors = _generate_numeric_distractors(result, rng, 3)
+    choices, idx = _shuffle_with_correct(result, distractors, rng)
+    obs_vec = _build_obs_vec(family_id, difficulty, encoding)
+    return TaskSpec(
+        family_id=family_id,
+        difficulty_id=difficulty,
+        obs_vec=obs_vec,
+        correct_action=idx,
+        choices_vec=[float(c) for c in choices],
+        human_prompt=prompt,
+        human_choices=[str(c) for c in choices],
+    )
+
+
+# =============================================================================
+# FAMILY 16: chemistry — moles, balancing, charge
+# =============================================================================
+
+def generate_chemistry(difficulty: int, rng: random.Random) -> TaskSpec:
+    family_id = 16
+    if difficulty == 0:
+        m = rng.randint(2, 20)
+        M = rng.randint(2, 10)
+        result = m / M
+        prompt = f"m={m}g, M={M}g/mol. n?"
+        encoding = [m, M, 0, 0, 0, 0, 0, 0]
+        distractors = _generate_numeric_distractors(result, rng, 3)
+        choices, idx = _shuffle_with_correct(result, distractors, rng)
+        choices_vec = [float(c) for c in choices]
+        human_choices = [str(c) for c in choices]
+
+    elif difficulty == 1:
+        prompt = "Balance: H2 + O2 -> ?"
+        choices = ["H2O", "2H2O", "H2O2", "OH"]
+        idx = 1
+        encoding = [1, 0, 1, 0, 0, 0, 0, 0]
+        obs_vec = _build_obs_vec(family_id, difficulty, encoding)
+        return TaskSpec(
+            family_id=family_id,
+            difficulty_id=difficulty,
+            obs_vec=obs_vec,
+            correct_action=idx,
+            choices_vec=[1.0, 0.0, -1.0, -2.0],
+            human_prompt=prompt,
+            human_choices=choices,
+        )
+
+    else:
+        prompt = "What is the charge of SO4 in sulfate?"
+        result = -2
+        distractors = _generate_numeric_distractors(result, rng, 3)
+        choices, idx = _shuffle_with_correct(result, distractors, rng)
+        encoding = [4, 2, 2, 0, 0, 0, 0, 0]
+        choices_vec = [float(c) for c in choices]
+        human_choices = [str(c) for c in choices]
+
+    obs_vec = _build_obs_vec(family_id, difficulty, encoding)
+    return TaskSpec(
+        family_id=family_id,
+        difficulty_id=difficulty,
+        obs_vec=obs_vec,
+        correct_action=idx,
+        choices_vec=choices_vec,
+        human_prompt=prompt,
+        human_choices=human_choices,
+    )
+
+
+# =============================================================================
+# FAMILY 17: probability — basic probability & statistics
+# =============================================================================
+
+def generate_probability(difficulty: int, rng: random.Random) -> TaskSpec:
+    family_id = 17
+    if difficulty == 0:
+        prompt = "A fair coin. P(heads)?"
+        choices = [0.5, 0.25, 1.0, 0.0]
+        idx = 0
+        encoding = [1, 2, 0, 0, 0, 0, 0, 0]
+    elif difficulty == 1:
+        prompt = "Dice: P(>4)?"
+        choices = [2/6, 1/6, 3/6, 4/6]
+        idx = 0
+        encoding = [6, 4, 1, 0, 0, 0, 0, 0]
+    else:
+        prompt = "Mean of [2,4,6]?"
+        result = 4
+        distractors = _generate_numeric_distractors(result, rng, 3)
+        choices, idx = _shuffle_with_correct(result, distractors, rng)
+        encoding = [2, 4, 6, 3, 0, 0, 0, 0]
+        return TaskSpec(
+            family_id=family_id,
+            difficulty_id=difficulty,
+            obs_vec=_build_obs_vec(family_id, difficulty, encoding),
+            correct_action=idx,
+            choices_vec=[float(c) for c in choices],
+            human_prompt=prompt,
+            human_choices=[str(c) for c in choices],
+        )
+
+    obs_vec = _build_obs_vec(family_id, difficulty, encoding)
+    return TaskSpec(
+        family_id=family_id,
+        difficulty_id=difficulty,
+        obs_vec=obs_vec,
+        correct_action=idx,
+        choices_vec=[float(c) for c in choices],
+        human_prompt=prompt,
+        human_choices=[str(c) for c in choices],
+    )
+
+
+# =============================================================================
+# FAMILY 15: physics_kinematics — basic physics equations
+# =============================================================================
+
+def generate_physics(difficulty: int, rng: random.Random) -> TaskSpec:
+    family_id = 15
+    if difficulty == 0:
+        v = rng.randint(1, 5)
+        t = rng.randint(1, 5)
+        result = v * t
+        prompt = f"A particle moves at {v} m/s for {t} s. Distance?"
+        encoding = [v, t, 0, 0, 0, 0, 0, 0]
+    elif difficulty == 1:
+        u = rng.randint(1, 5)
+        a = rng.randint(1, 3)
+        t = rng.randint(1, 5)
+        result = u * t + 0.5 * a * t * t
+        prompt = f"u={u}, a={a}, t={t}. s=ut+0.5at^2?"
+        encoding = [u, a, t, 1, 0, 0, 0, 0]
+    else:
+        m = rng.randint(1, 5)
+        acc = rng.randint(1, 5)
+        result = m * acc
+        prompt = f"Force=ma. m={m}, a={acc}. Force?"
+        encoding = [m, acc, 2, 0, 0, 0, 0, 0]
+
+    distractors = _generate_numeric_distractors(result, rng, 3)
+    choices, idx = _shuffle_with_correct(result, distractors, rng)
+    obs_vec = _build_obs_vec(family_id, difficulty, encoding)
+    return TaskSpec(
+        family_id=family_id,
+        difficulty_id=difficulty,
+        obs_vec=obs_vec,
+        correct_action=idx,
+        choices_vec=[float(c) for c in choices],
+        human_prompt=prompt,
+        human_choices=[str(c) for c in choices],
+    )
+
+
+# =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
 
@@ -384,12 +1011,31 @@ def _shuffle_with_correct(correct, distractors: List, rng: random.Random) -> Tup
 # MAIN API
 # =============================================================================
 
+NUM_FAMILIES = 18
+NUM_DIFFICULTIES = 3
+OBS_VEC_SIZE = 32
+FAMILY_NAMES = ["var_trace", "if_cond", "loop_count", "list_index", "bool_logic", "python_syntax", "java_syntax", "js_syntax", "cpp_syntax", "rust_syntax", "sql_syntax", "html_css", "bash_syntax", "regex", "math_algebra", "physics", "chemistry", "probability"]
+DIFFICULTY_NAMES = ["easy", "medium", "hard"]
+
 GENERATORS: List[Callable] = [
     generate_var_trace,
     generate_if_cond,
     generate_loop_count,
     generate_list_index,
     generate_bool_logic,
+    generate_python_syntax,
+    generate_java_syntax,
+    generate_js_syntax,
+    generate_cpp_syntax,
+    generate_rust_syntax,
+    generate_sql_syntax,
+    generate_html_css,
+    generate_bash_syntax,
+    generate_regex,
+    generate_math_algebra,
+    generate_physics,
+    generate_chemistry,
+    generate_probability,
 ]
 
 

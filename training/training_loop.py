@@ -87,6 +87,81 @@ class MetaTrainingResults:
             json.dump(self.to_dict(), f, indent=2)
 
 
+def run_random_curriculum(
+    meta_steps: int,
+    model: StudentAgent,
+    env: Any,
+    eval_set: List[TaskSpec],
+    num_arms: int,
+    rng: Any
+) -> Dict[str, Any]:
+    """Run baseline where tasks are selected uniformly at random."""
+    heatmap = [[0 for _ in range(meta_steps)] for _ in range(num_arms)]
+    accuracies: List[float] = []
+    selected_arms: List[int] = []
+    train_steps = getattr(env, "student_train_steps", None)
+    if train_steps is None and isinstance(env, dict):
+        train_steps = env.get("train_steps")
+    if train_steps is None:
+        train_steps = getattr(env, "train_steps", 256)
+    
+    for step in range(meta_steps):
+        arm_id = rng.randint(0, num_arms - 1)
+        selected_arms.append(arm_id)
+        heatmap[arm_id][step] = 1
+        model.train_on_task(arm_id=arm_id, total_timesteps=train_steps)
+        accuracy = model.evaluate(eval_set)
+        accuracies.append(accuracy)
+    
+    return {
+        "accuracy": accuracies,
+        "heatmap": heatmap,
+        "arms": selected_arms,
+        "meta_steps": meta_steps,
+    }
+
+
+def run_fixed_curriculum(
+    meta_steps: int,
+    model: StudentAgent,
+    env: Any,
+    eval_set: List[TaskSpec],
+    num_arms: int,
+    rng: Any = None
+) -> Dict[str, Any]:
+    """Run baseline with deterministic easy→medium→hard curriculum."""
+    heatmap = [[0 for _ in range(meta_steps)] for _ in range(num_arms)]
+    accuracies: List[float] = []
+    selected_arms: List[int] = []
+    train_steps = getattr(env, "student_train_steps", None)
+    if train_steps is None and isinstance(env, dict):
+        train_steps = env.get("train_steps")
+    if train_steps is None:
+        train_steps = getattr(env, "train_steps", 256)
+
+    # Build fixed order: all easy, then medium, then hard
+    fixed_order: List[int] = []
+    for difficulty in range(NUM_DIFFICULTIES):
+        for family in range(NUM_FAMILIES):
+            arm_id = family * NUM_DIFFICULTIES + difficulty
+            fixed_order.append(arm_id)
+
+    for step in range(meta_steps):
+        arm_id = fixed_order[step % len(fixed_order)]
+        selected_arms.append(arm_id)
+        heatmap[arm_id][step] = 1
+        model.train_on_task(arm_id=arm_id, total_timesteps=train_steps)
+        accuracy = model.evaluate(eval_set)
+        accuracies.append(accuracy)
+
+    return {
+        "accuracy": accuracies,
+        "heatmap": heatmap,
+        "arms": selected_arms,
+        "meta_steps": meta_steps,
+    }
+
+
 class MetaTrainer:
     """
     Meta-training loop that coordinates teacher and student.

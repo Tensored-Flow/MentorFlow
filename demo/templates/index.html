@@ -15,6 +15,7 @@
             border-radius: 0.5rem;
             white-space: pre-wrap;
         }
+
         .choice-btn {
             transition: all 0.2s;
         }
@@ -25,6 +26,44 @@
         .incorrect { background-color: #ef4444 !important; color: white; }
         .heatmap-cell {
             transition: all 0.3s;
+        }
+        /* Timeline heatmap styles */
+        .timeline-container {
+            overflow-x: auto;
+            max-width: 100%;
+        }
+        .timeline-grid {
+            display: grid;
+            gap: 1px;
+            min-width: max-content;
+        }
+        .timeline-row {
+            display: flex;
+            align-items: center;
+        }
+        .timeline-label {
+            width: 140px;
+            font-size: 0.75rem;
+            padding-right: 8px;
+            text-align: right;
+            flex-shrink: 0;
+        }
+        .timeline-cells {
+            display: flex;
+            gap: 1px;
+        }
+        .timeline-cell {
+            width: 8px;
+            height: 20px;
+            background: #374151;
+            border-radius: 2px;
+            transition: background 0.2s;
+        }
+        .timeline-cell.selected {
+            background: #a855f7;
+        }
+        .timeline-cell:hover {
+            outline: 1px solid #fff;
         }
     </style>
 </head>
@@ -54,6 +93,17 @@
                 <!-- Task Selection -->
                 <div class="bg-gray-800 rounded-xl p-6">
                     <h2 class="text-xl font-bold mb-4">Select Task Type</h2>
+                    <div class="mb-4">
+                        <label for="categoryFilter" class="block text-sm text-gray-400 mb-2">Category</label>
+                        <select id="categoryFilter" onchange="setSelectedCategory(this.value)" class="border px-2 py-1 rounded mb-4 text-black">
+                            <option value="programming">Programming</option>
+                            <option value="math">Maths</option>
+                            <option value="physics">Physics</option>
+                            <option value="chemistry">Chemistry</option>
+                            <option value="probability">Probability</option>
+                            <option value="all" selected>All Families</option>
+                        </select>
+                    </div>
                     <div class="grid grid-cols-3 gap-2 mb-4" id="taskSelector">
                         <!-- Filled by JS -->
                     </div>
@@ -126,12 +176,17 @@
                         <input type="number" id="numSteps" value="30" min="10" max="200" 
                                class="bg-gray-700 rounded-lg px-4 py-2 w-24">
                     </div>
-                    <button onclick="startTraining()" id="startBtn" class="bg-green-600 hover:bg-green-700 px-6 py-2 rounded-lg font-semibold">
-                        ▶️ Start Training
-                    </button>
-                    <button onclick="stopTraining()" id="stopBtn" class="bg-red-600 hover:bg-red-700 px-6 py-2 rounded-lg font-semibold hidden">
+                    <div class="flex flex-wrap gap-3">
+                        <button onclick="startTraining(false)" id="startBtn" class="bg-green-600 hover:bg-green-700 px-6 py-2 rounded-lg font-semibold">
+                            ▶️ Live Training
+                        </button>
+                        <button onclick="startTraining(true)" id="replayBtn" class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded-lg font-semibold">
+                            🔁 Replay Last Run
+                        </button>
+                        <button onclick="stopTraining()" id="stopBtn" class="bg-red-600 hover:bg-red-700 px-6 py-2 rounded-lg font-semibold hidden">
                         ⏹️ Stop
-                    </button>
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -166,9 +221,9 @@
                 </div>
             </div>
 
-            <!-- Curriculum Heatmap -->
-            <div class="bg-gray-800 rounded-xl p-6">
-                <h3 class="text-lg font-bold mb-4">🗺️ Curriculum Heatmap (Task Selections)</h3>
+            <!-- Curriculum Heatmap (Cumulative) -->
+            <div class="bg-gray-800 rounded-xl p-6 mb-8">
+                <h3 class="text-lg font-bold mb-4">🗺️ Cumulative Task Selections</h3>
                 <div class="overflow-x-auto">
                     <table class="w-full">
                         <thead>
@@ -186,6 +241,15 @@
                 </div>
             </div>
 
+            <!-- Selection Timeline Heatmap -->
+            <div class="bg-gray-800 rounded-xl p-6">
+                <h3 class="text-lg font-bold mb-4">📊 Curriculum Timeline (Arm × Step)</h3>
+                <p class="text-gray-400 text-sm mb-4">Each row is an arm (task type). Purple = selected at that step.</p>
+                <div class="timeline-container" id="timelineContainer">
+                    <div class="text-gray-500 text-center py-8">Start training to see timeline...</div>
+                </div>
+            </div>
+
             <!-- Current Task Preview -->
             <div class="bg-gray-800 rounded-xl p-6 mt-8">
                 <h3 class="text-lg font-bold mb-4">📝 Current Training Task</h3>
@@ -198,10 +262,32 @@
 
     <script>
         // State
+        const CATEGORY_MAP = {
+            programming: [
+                "python_syntax",
+                "java_syntax",
+                "js_syntax",
+                "cpp_syntax",
+                "rust_syntax",
+                "sql_syntax",
+                "html_css",
+                "bash_syntax",
+                "regex",
+            ],
+            math: ["math_algebra"],
+            physics: ["physics_kinematics"],
+            chemistry: ["chemistry"],
+            probability: ["probability"],
+            all: null,
+        };
+
+        let selectedCategory = 'all';
+        let allFamilies = [];
         let currentTask = null;
         let userStats = { total: 0, correct: 0, streak: 0 };
         let learningChart = null;
         let rewardChart = null;
+        let comparisonChart = null;
         let pollInterval = null;
 
         // Initialize
@@ -225,25 +311,14 @@
         // Load task families
         async function loadFamilies() {
             const res = await fetch('/api/families');
-            const families = await res.json();
-            
-            const selector = document.getElementById('taskSelector');
-            selector.innerHTML = '';
-            
-            families.forEach(fam => {
-                fam.difficulties.forEach(diff => {
-                    const btn = document.createElement('button');
-                    btn.className = 'bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm';
-                    btn.textContent = `${fam.name.slice(0, 4)}_${diff.name[0]}`;
-                    btn.onclick = () => getTaskByArm(diff.arm_id);
-                    selector.appendChild(btn);
-                });
-            });
+            allFamilies = await res.json();
+
+            renderFamilyButtons();
 
             // Init heatmap
             const heatmapBody = document.getElementById('heatmapBody');
             heatmapBody.innerHTML = '';
-            families.forEach(fam => {
+            allFamilies.forEach(fam => {
                 const row = document.createElement('tr');
                 row.innerHTML = `<td class="p-2 font-semibold">${fam.name}</td>`;
                 for (let i = 0; i < 3; i++) {
@@ -254,6 +329,33 @@
                 }
                 heatmapBody.appendChild(row);
             });
+
+        }
+
+        function renderFamilyButtons() {
+            const selector = document.getElementById('taskSelector');
+            if (!selector) return;
+
+            selector.innerHTML = '';
+            const categoryFamilies = CATEGORY_MAP[selectedCategory];
+            const familiesToShow = !categoryFamilies
+                ? allFamilies
+                : allFamilies.filter(fam => categoryFamilies.includes(fam.name));
+
+            familiesToShow.forEach(fam => {
+                fam.difficulties.forEach(diff => {
+                    const btn = document.createElement('button');
+                    btn.className = 'bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm';
+                    btn.textContent = `${fam.name.slice(0, 4)}_${diff.name[0]}`;
+                    btn.onclick = () => getTaskByArm(diff.arm_id);
+                    selector.appendChild(btn);
+                });
+            });
+        }
+
+        function setSelectedCategory(value) {
+            selectedCategory = value;
+            renderFamilyButtons();
         }
 
         // Get random task
@@ -330,6 +432,51 @@
             document.getElementById('statStreak').textContent = userStats.streak;
         }
 
+        // Render timeline heatmap (15 arms × N steps)
+        function renderTimelineHeatmap(heatmap) {
+            const container = document.getElementById('timelineContainer');
+            const { num_arms, num_steps, data, arm_labels } = heatmap;
+            
+            if (!data || data.length === 0 || num_steps === 0) {
+                container.innerHTML = '<div class="text-gray-500 text-center py-8">No data yet...</div>';
+                return;
+            }
+            
+            let html = '<div class="timeline-grid">';
+            
+            for (let armId = 0; armId < num_arms; armId++) {
+                const label = arm_labels ? arm_labels[armId] : `arm_${armId}`;
+                const rowData = data[armId] || [];
+                
+                // Color-code label by difficulty (easy=green, medium=yellow, hard=red)
+                const difficulty = armId % 3;
+                const labelColor = difficulty === 0 ? 'text-green-400' : 
+                                   difficulty === 1 ? 'text-yellow-400' : 'text-red-400';
+                
+                html += `<div class="timeline-row">`;
+                html += `<div class="timeline-label ${labelColor}">${label}</div>`;
+                html += `<div class="timeline-cells">`;
+                
+                for (let step = 0; step < num_steps; step++) {
+                    const selected = rowData[step] === 1;
+                    html += `<div class="timeline-cell ${selected ? 'selected' : ''}" 
+                                  title="Step ${step + 1}: ${selected ? 'Selected' : '-'}"></div>`;
+                }
+                
+                html += `</div></div>`;
+            }
+            
+            html += '</div>';
+            
+            // Add step axis labels
+            html += '<div class="flex mt-2" style="padding-left: 140px;">';
+            html += '<div class="text-xs text-gray-500">Step 1</div>';
+            html += `<div class="text-xs text-gray-500 ml-auto">${num_steps}</div>`;
+            html += '</div>';
+            
+            container.innerHTML = html;
+        }
+
         // Initialize charts
         function initCharts() {
             const ctxLearning = document.getElementById('learningChart').getContext('2d');
@@ -378,18 +525,111 @@
             });
         }
 
+        function updateDashboard(status) {
+            const teacher = status.teacher || {};
+            const baselineRandom = status.baseline_random || {};
+            const baselineFixed = status.baseline_fixed || {};
+            const meta = teacher.metadata || {};
+            const timeline = teacher.heatmap?.timeline || [];
+            const cumulative = teacher.heatmap?.cumulative || [];
+            
+            const step = meta.step ?? 0;
+            const totalSteps = meta.total_steps ?? 0;
+            document.getElementById('trainProgress').textContent = `${step} / ${totalSteps}`;
+            const pct = totalSteps > 0 ? (100 * step) / totalSteps : 0;
+            document.getElementById('progressBar').style.width = `${pct}%`;
+            
+            const acc = (teacher.final_accuracy ?? 0) * 100;
+            document.getElementById('trainAccuracy').textContent = `${acc.toFixed(1)}%`;
+            
+            if (teacher.arm_names && teacher.arm_names.length > 0) {
+                document.getElementById('trainLastTask').textContent = teacher.arm_names[teacher.arm_names.length - 1];
+            }
+            
+            const accuracies = teacher.accuracies || [];
+            learningChart.data.labels = accuracies.map((_, i) => i + 1);
+            learningChart.data.datasets[0].data = accuracies;
+            learningChart.update();
+            
+            const rewards = teacher.rewards || [];
+            rewardChart.data.labels = rewards.map((_, i) => i + 1);
+            rewardChart.data.datasets[0].data = rewards;
+            rewardChart.data.datasets[0].backgroundColor = rewards.map(r => r >= 0 ? '#22c55e' : '#ef4444');
+            rewardChart.update();
+            
+            const randomAcc = baselineRandom.accuracies || baselineRandom.accuracy || [];
+            const fixedAcc = baselineFixed.accuracies || baselineFixed.accuracy || [];
+            const maxLen = Math.max(
+                accuracies.length,
+                randomAcc.length,
+                fixedAcc.length
+            );
+            if (comparisonChart) {
+                comparisonChart.data.labels = Array.from({ length: maxLen }, (_, i) => i + 1);
+                comparisonChart.data.datasets[0].data = accuracies;
+                comparisonChart.data.datasets[1].data = randomAcc;
+                comparisonChart.data.datasets[2].data = fixedAcc;
+                comparisonChart.update();
+            }
+            
+            if (Array.isArray(cumulative) && cumulative.length) {
+                const maxVal = Math.max(...cumulative.flat(), 1);
+                cumulative.forEach((row, i) => {
+                    row.forEach((val, j) => {
+                        const cell = document.getElementById(`heatmap-${i}-${j}`);
+                        if (cell) {
+                            cell.textContent = val;
+                            const intensity = Math.min(val / maxVal, 1);
+                            cell.style.backgroundColor = `rgba(147, 51, 234, ${0.2 + intensity * 0.6})`;
+                        }
+                    });
+                });
+            }
+            
+            if (Array.isArray(timeline) && timeline.length > 0) {
+                renderTimelineHeatmap({
+                    num_arms: teacher.heatmap?.num_arms || timeline.length,
+                    num_steps: teacher.heatmap?.num_steps || (timeline[0]?.length ?? 0),
+                    data: timeline,
+                    arm_labels: teacher.heatmap?.arm_labels || [],
+                });
+            }
+            
+            if (teacher.current_task) {
+                document.getElementById('currentTaskPreview').innerHTML = `
+                    <div class="text-purple-400 font-bold mb-2">${teacher.current_task.arm_name}</div>
+                    <div class="code-block text-sm">${teacher.current_task.prompt}</div>
+                `;
+            }
+            
+            return Boolean(meta.running);
+        }
+
         // Start training
-        async function startTraining() {
+        async function startTraining(replayMode = false) {
             const strategy = document.getElementById('strategySelect').value;
             const numSteps = parseInt(document.getElementById('numSteps').value);
             
             const res = await fetch('/api/train/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ strategy, num_steps: numSteps })
+                body: JSON.stringify({ strategy, num_steps: numSteps, replay_mode: replayMode })
             });
             
-            if (res.ok) {
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                alert(err.error || 'Training failed.');
+                return;
+            }
+
+            if (replayMode) {
+                const snapshot = await res.json();
+                updateDashboard(snapshot);
+                return;
+            }
+
+            const payload = await res.json();
+            if (payload.status === 'started') {
                 document.getElementById('startBtn').classList.add('hidden');
                 document.getElementById('stopBtn').classList.remove('hidden');
                 
@@ -401,6 +641,13 @@
                 rewardChart.data.datasets[0].backgroundColor = [];
                 learningChart.update();
                 rewardChart.update();
+                comparisonChart.data.labels = [];
+                comparisonChart.data.datasets.forEach(ds => ds.data = []);
+                comparisonChart.update();
+                
+                // Reset timeline heatmap
+                document.getElementById('timelineContainer').innerHTML = 
+                    '<div class="text-gray-500 text-center py-8">Training started...</div>';
                 
                 // Start polling
                 pollInterval = setInterval(pollStatus, 500);
@@ -419,56 +666,8 @@
         async function pollStatus() {
             const res = await fetch('/api/train/status');
             const status = await res.json();
-            
-            // Update progress
-            document.getElementById('trainProgress').textContent = `${status.step} / ${status.total_steps}`;
-            const pct = status.total_steps > 0 ? 100 * status.step / status.total_steps : 0;
-            document.getElementById('progressBar').style.width = `${pct}%`;
-            
-            // Update accuracy
-            const acc = status.final_accuracy * 100;
-            document.getElementById('trainAccuracy').textContent = `${acc.toFixed(1)}%`;
-            
-            // Update last task
-            if (status.arm_names && status.arm_names.length > 0) {
-                document.getElementById('trainLastTask').textContent = status.arm_names[status.arm_names.length - 1];
-            }
-            
-            // Update charts
-            learningChart.data.labels = status.accuracies.map((_, i) => i + 1);
-            learningChart.data.datasets[0].data = status.accuracies;
-            learningChart.update();
-            
-            rewardChart.data.labels = status.rewards.map((_, i) => i + 1);
-            rewardChart.data.datasets[0].data = status.rewards;
-            rewardChart.data.datasets[0].backgroundColor = status.rewards.map(r => r >= 0 ? '#22c55e' : '#ef4444');
-            rewardChart.update();
-            
-            // Update heatmap
-            if (status.curriculum_heatmap) {
-                const maxVal = Math.max(...status.curriculum_heatmap.flat(), 1);
-                status.curriculum_heatmap.forEach((row, i) => {
-                    row.forEach((val, j) => {
-                        const cell = document.getElementById(`heatmap-${i}-${j}`);
-                        if (cell) {
-                            cell.textContent = val;
-                            const intensity = Math.min(val / maxVal, 1);
-                            cell.style.backgroundColor = `rgba(147, 51, 234, ${0.2 + intensity * 0.6})`;
-                        }
-                    });
-                });
-            }
-            
-            // Update current task preview
-            if (status.current_task) {
-                document.getElementById('currentTaskPreview').innerHTML = `
-                    <div class="text-purple-400 font-bold mb-2">${status.current_task.arm_name}</div>
-                    <div class="code-block text-sm">${status.current_task.prompt}</div>
-                `;
-            }
-            
-            // Stop polling if done
-            if (!status.running) {
+            const running = updateDashboard(status);
+            if (!running) {
                 clearInterval(pollInterval);
                 document.getElementById('startBtn').classList.remove('hidden');
                 document.getElementById('stopBtn').classList.add('hidden');
