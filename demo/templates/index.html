@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TeachRL - AI Teacher Demo</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .code-block {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            white-space: pre-wrap;
+        }
+        .choice-btn {
+            transition: all 0.2s;
+        }
+        .choice-btn:hover {
+            transform: translateY(-2px);
+        }
+        .correct { background-color: #22c55e !important; color: white; }
+        .incorrect { background-color: #ef4444 !important; color: white; }
+        .heatmap-cell {
+            transition: all 0.3s;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen">
+    <!-- Header -->
+    <header class="bg-gradient-to-r from-purple-600 to-blue-600 py-6 shadow-lg">
+        <div class="container mx-auto px-4">
+            <h1 class="text-3xl font-bold">🎓 TeachRL</h1>
+            <p class="text-purple-200 mt-1">AI Teacher That Learns to Teach Coding</p>
+        </div>
+    </header>
+
+    <main class="container mx-auto px-4 py-8">
+        <!-- Tabs -->
+        <div class="flex space-x-4 mb-8">
+            <button onclick="showTab('tryTask')" id="tab-tryTask" class="tab-btn px-6 py-3 bg-purple-600 rounded-lg font-semibold">
+                🧩 Try a Task
+            </button>
+            <button onclick="showTab('training')" id="tab-training" class="tab-btn px-6 py-3 bg-gray-700 rounded-lg font-semibold">
+                🚀 Watch Training
+            </button>
+        </div>
+
+        <!-- Tab: Try a Task -->
+        <div id="tryTask" class="tab-content">
+            <div class="grid md:grid-cols-2 gap-8">
+                <!-- Task Selection -->
+                <div class="bg-gray-800 rounded-xl p-6">
+                    <h2 class="text-xl font-bold mb-4">Select Task Type</h2>
+                    <div class="grid grid-cols-3 gap-2 mb-4" id="taskSelector">
+                        <!-- Filled by JS -->
+                    </div>
+                    <button onclick="getRandomTask()" class="w-full bg-purple-600 hover:bg-purple-700 py-3 rounded-lg font-semibold mt-4">
+                        🎲 Random Task
+                    </button>
+                </div>
+
+                <!-- Task Display -->
+                <div class="bg-gray-800 rounded-xl p-6">
+                    <h2 class="text-xl font-bold mb-4">Current Task</h2>
+                    <div id="taskDisplay" class="hidden">
+                        <div class="mb-2">
+                            <span id="taskFamily" class="bg-blue-600 px-3 py-1 rounded-full text-sm"></span>
+                            <span id="taskDifficulty" class="bg-yellow-600 px-3 py-1 rounded-full text-sm ml-2"></span>
+                        </div>
+                        <div id="taskPrompt" class="code-block my-4"></div>
+                        <div id="taskChoices" class="grid grid-cols-2 gap-3">
+                            <!-- Filled by JS -->
+                        </div>
+                        <div id="taskResult" class="mt-4 text-center text-lg font-bold hidden"></div>
+                    </div>
+                    <div id="taskPlaceholder" class="text-gray-500 text-center py-12">
+                        Select a task type or click Random Task
+                    </div>
+                </div>
+            </div>
+
+            <!-- Stats -->
+            <div class="bg-gray-800 rounded-xl p-6 mt-8">
+                <h2 class="text-xl font-bold mb-4">Your Performance</h2>
+                <div class="grid grid-cols-4 gap-4">
+                    <div class="text-center">
+                        <div id="statTotal" class="text-3xl font-bold text-purple-400">0</div>
+                        <div class="text-gray-400">Total</div>
+                    </div>
+                    <div class="text-center">
+                        <div id="statCorrect" class="text-3xl font-bold text-green-400">0</div>
+                        <div class="text-gray-400">Correct</div>
+                    </div>
+                    <div class="text-center">
+                        <div id="statAccuracy" class="text-3xl font-bold text-blue-400">0%</div>
+                        <div class="text-gray-400">Accuracy</div>
+                    </div>
+                    <div class="text-center">
+                        <div id="statStreak" class="text-3xl font-bold text-yellow-400">0</div>
+                        <div class="text-gray-400">Streak</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: Training -->
+        <div id="training" class="tab-content hidden">
+            <!-- Controls -->
+            <div class="bg-gray-800 rounded-xl p-6 mb-8">
+                <h2 class="text-xl font-bold mb-4">Training Controls</h2>
+                <div class="flex flex-wrap gap-4 items-end">
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">Strategy</label>
+                        <select id="strategySelect" class="bg-gray-700 rounded-lg px-4 py-2">
+                            <option value="ucb1">UCB1 (Exploration)</option>
+                            <option value="thompson">Thompson Sampling</option>
+                            <option value="epsilon_greedy">ε-Greedy</option>
+                            <option value="random">Random (Baseline)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">Steps</label>
+                        <input type="number" id="numSteps" value="30" min="10" max="200" 
+                               class="bg-gray-700 rounded-lg px-4 py-2 w-24">
+                    </div>
+                    <button onclick="startTraining()" id="startBtn" class="bg-green-600 hover:bg-green-700 px-6 py-2 rounded-lg font-semibold">
+                        ▶️ Start Training
+                    </button>
+                    <button onclick="stopTraining()" id="stopBtn" class="bg-red-600 hover:bg-red-700 px-6 py-2 rounded-lg font-semibold hidden">
+                        ⏹️ Stop
+                    </button>
+                </div>
+            </div>
+
+            <!-- Progress -->
+            <div class="grid md:grid-cols-3 gap-6 mb-8">
+                <div class="bg-gray-800 rounded-xl p-6">
+                    <div class="text-sm text-gray-400">Progress</div>
+                    <div id="trainProgress" class="text-3xl font-bold">0 / 0</div>
+                    <div class="w-full bg-gray-700 rounded-full h-2 mt-2">
+                        <div id="progressBar" class="bg-purple-600 h-2 rounded-full" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="bg-gray-800 rounded-xl p-6">
+                    <div class="text-sm text-gray-400">Current Accuracy</div>
+                    <div id="trainAccuracy" class="text-3xl font-bold text-green-400">0%</div>
+                </div>
+                <div class="bg-gray-800 rounded-xl p-6">
+                    <div class="text-sm text-gray-400">Last Selected Task</div>
+                    <div id="trainLastTask" class="text-xl font-bold text-blue-400">-</div>
+                </div>
+            </div>
+
+            <!-- Charts -->
+            <div class="grid md:grid-cols-2 gap-8 mb-8">
+                <div class="bg-gray-800 rounded-xl p-6">
+                    <h3 class="text-lg font-bold mb-4">📈 Learning Curve</h3>
+                    <canvas id="learningChart" height="200"></canvas>
+                </div>
+                <div class="bg-gray-800 rounded-xl p-6">
+                    <h3 class="text-lg font-bold mb-4">🎯 Teacher Rewards</h3>
+                    <canvas id="rewardChart" height="200"></canvas>
+                </div>
+            </div>
+
+            <!-- Curriculum Heatmap -->
+            <div class="bg-gray-800 rounded-xl p-6">
+                <h3 class="text-lg font-bold mb-4">🗺️ Curriculum Heatmap (Task Selections)</h3>
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead>
+                            <tr>
+                                <th class="p-2"></th>
+                                <th class="p-2 text-center text-green-400">Easy</th>
+                                <th class="p-2 text-center text-yellow-400">Medium</th>
+                                <th class="p-2 text-center text-red-400">Hard</th>
+                            </tr>
+                        </thead>
+                        <tbody id="heatmapBody">
+                            <!-- Filled by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Current Task Preview -->
+            <div class="bg-gray-800 rounded-xl p-6 mt-8">
+                <h3 class="text-lg font-bold mb-4">📝 Current Training Task</h3>
+                <div id="currentTaskPreview" class="text-gray-500">
+                    Start training to see tasks...
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // State
+        let currentTask = null;
+        let userStats = { total: 0, correct: 0, streak: 0 };
+        let learningChart = null;
+        let rewardChart = null;
+        let pollInterval = null;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadFamilies();
+            initCharts();
+        });
+
+        // Tabs
+        function showTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.tab-btn').forEach(el => {
+                el.classList.remove('bg-purple-600');
+                el.classList.add('bg-gray-700');
+            });
+            document.getElementById(tabId).classList.remove('hidden');
+            document.getElementById('tab-' + tabId).classList.remove('bg-gray-700');
+            document.getElementById('tab-' + tabId).classList.add('bg-purple-600');
+        }
+
+        // Load task families
+        async function loadFamilies() {
+            const res = await fetch('/api/families');
+            const families = await res.json();
+            
+            const selector = document.getElementById('taskSelector');
+            selector.innerHTML = '';
+            
+            families.forEach(fam => {
+                fam.difficulties.forEach(diff => {
+                    const btn = document.createElement('button');
+                    btn.className = 'bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm';
+                    btn.textContent = `${fam.name.slice(0, 4)}_${diff.name[0]}`;
+                    btn.onclick = () => getTaskByArm(diff.arm_id);
+                    selector.appendChild(btn);
+                });
+            });
+
+            // Init heatmap
+            const heatmapBody = document.getElementById('heatmapBody');
+            heatmapBody.innerHTML = '';
+            families.forEach(fam => {
+                const row = document.createElement('tr');
+                row.innerHTML = `<td class="p-2 font-semibold">${fam.name}</td>`;
+                for (let i = 0; i < 3; i++) {
+                    row.innerHTML += `<td class="p-2 text-center">
+                        <div class="heatmap-cell bg-gray-700 rounded-lg py-4 text-2xl font-bold" 
+                             id="heatmap-${fam.id}-${i}">0</div>
+                    </td>`;
+                }
+                heatmapBody.appendChild(row);
+            });
+        }
+
+        // Get random task
+        async function getRandomTask() {
+            const res = await fetch('/api/task/random');
+            const task = await res.json();
+            displayTask(task);
+        }
+
+        // Get task by arm
+        async function getTaskByArm(armId) {
+            const res = await fetch(`/api/task/${armId}`);
+            const task = await res.json();
+            displayTask(task);
+        }
+
+        // Display task
+        function displayTask(task) {
+            currentTask = task;
+            document.getElementById('taskPlaceholder').classList.add('hidden');
+            document.getElementById('taskDisplay').classList.remove('hidden');
+            document.getElementById('taskResult').classList.add('hidden');
+            
+            document.getElementById('taskFamily').textContent = task.family;
+            document.getElementById('taskDifficulty').textContent = task.difficulty;
+            document.getElementById('taskPrompt').textContent = task.prompt;
+            
+            const choicesDiv = document.getElementById('taskChoices');
+            choicesDiv.innerHTML = '';
+            task.choices.forEach((choice, i) => {
+                const btn = document.createElement('button');
+                btn.className = 'choice-btn bg-gray-700 hover:bg-gray-600 px-4 py-3 rounded-lg font-mono';
+                btn.textContent = choice;
+                btn.onclick = () => checkAnswer(i);
+                btn.id = `choice-${i}`;
+                choicesDiv.appendChild(btn);
+            });
+        }
+
+        // Check answer
+        function checkAnswer(selected) {
+            if (!currentTask) return;
+            
+            const correct = selected === currentTask.correct_action;
+            userStats.total++;
+            if (correct) {
+                userStats.correct++;
+                userStats.streak++;
+            } else {
+                userStats.streak = 0;
+            }
+            
+            // Show result
+            document.querySelectorAll('.choice-btn').forEach((btn, i) => {
+                btn.disabled = true;
+                if (i === currentTask.correct_action) btn.classList.add('correct');
+                else if (i === selected && !correct) btn.classList.add('incorrect');
+            });
+            
+            const resultDiv = document.getElementById('taskResult');
+            resultDiv.classList.remove('hidden');
+            resultDiv.textContent = correct ? '✅ Correct!' : '❌ Wrong! Answer: ' + currentTask.correct_answer;
+            resultDiv.className = `mt-4 text-center text-lg font-bold ${correct ? 'text-green-400' : 'text-red-400'}`;
+            
+            updateStats();
+        }
+
+        // Update user stats
+        function updateStats() {
+            document.getElementById('statTotal').textContent = userStats.total;
+            document.getElementById('statCorrect').textContent = userStats.correct;
+            document.getElementById('statAccuracy').textContent = 
+                userStats.total > 0 ? Math.round(100 * userStats.correct / userStats.total) + '%' : '0%';
+            document.getElementById('statStreak').textContent = userStats.streak;
+        }
+
+        // Initialize charts
+        function initCharts() {
+            const ctxLearning = document.getElementById('learningChart').getContext('2d');
+            learningChart = new Chart(ctxLearning, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Accuracy',
+                        data: [],
+                        borderColor: '#22c55e',
+                        backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                        fill: true,
+                        tension: 0.3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: { min: 0, max: 1, grid: { color: '#374151' } },
+                        x: { grid: { color: '#374151' } }
+                    },
+                    plugins: { legend: { display: false } }
+                }
+            });
+
+            const ctxReward = document.getElementById('rewardChart').getContext('2d');
+            rewardChart = new Chart(ctxReward, {
+                type: 'bar',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Reward',
+                        data: [],
+                        backgroundColor: [],
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: { grid: { color: '#374151' } },
+                        x: { grid: { color: '#374151' } }
+                    },
+                    plugins: { legend: { display: false } }
+                }
+            });
+        }
+
+        // Start training
+        async function startTraining() {
+            const strategy = document.getElementById('strategySelect').value;
+            const numSteps = parseInt(document.getElementById('numSteps').value);
+            
+            const res = await fetch('/api/train/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ strategy, num_steps: numSteps })
+            });
+            
+            if (res.ok) {
+                document.getElementById('startBtn').classList.add('hidden');
+                document.getElementById('stopBtn').classList.remove('hidden');
+                
+                // Reset charts
+                learningChart.data.labels = [];
+                learningChart.data.datasets[0].data = [];
+                rewardChart.data.labels = [];
+                rewardChart.data.datasets[0].data = [];
+                rewardChart.data.datasets[0].backgroundColor = [];
+                learningChart.update();
+                rewardChart.update();
+                
+                // Start polling
+                pollInterval = setInterval(pollStatus, 500);
+            }
+        }
+
+        // Stop training
+        async function stopTraining() {
+            await fetch('/api/train/stop', { method: 'POST' });
+            clearInterval(pollInterval);
+            document.getElementById('startBtn').classList.remove('hidden');
+            document.getElementById('stopBtn').classList.add('hidden');
+        }
+
+        // Poll training status
+        async function pollStatus() {
+            const res = await fetch('/api/train/status');
+            const status = await res.json();
+            
+            // Update progress
+            document.getElementById('trainProgress').textContent = `${status.step} / ${status.total_steps}`;
+            const pct = status.total_steps > 0 ? 100 * status.step / status.total_steps : 0;
+            document.getElementById('progressBar').style.width = `${pct}%`;
+            
+            // Update accuracy
+            const acc = status.final_accuracy * 100;
+            document.getElementById('trainAccuracy').textContent = `${acc.toFixed(1)}%`;
+            
+            // Update last task
+            if (status.arm_names && status.arm_names.length > 0) {
+                document.getElementById('trainLastTask').textContent = status.arm_names[status.arm_names.length - 1];
+            }
+            
+            // Update charts
+            learningChart.data.labels = status.accuracies.map((_, i) => i + 1);
+            learningChart.data.datasets[0].data = status.accuracies;
+            learningChart.update();
+            
+            rewardChart.data.labels = status.rewards.map((_, i) => i + 1);
+            rewardChart.data.datasets[0].data = status.rewards;
+            rewardChart.data.datasets[0].backgroundColor = status.rewards.map(r => r >= 0 ? '#22c55e' : '#ef4444');
+            rewardChart.update();
+            
+            // Update heatmap
+            if (status.curriculum_heatmap) {
+                const maxVal = Math.max(...status.curriculum_heatmap.flat(), 1);
+                status.curriculum_heatmap.forEach((row, i) => {
+                    row.forEach((val, j) => {
+                        const cell = document.getElementById(`heatmap-${i}-${j}`);
+                        if (cell) {
+                            cell.textContent = val;
+                            const intensity = Math.min(val / maxVal, 1);
+                            cell.style.backgroundColor = `rgba(147, 51, 234, ${0.2 + intensity * 0.6})`;
+                        }
+                    });
+                });
+            }
+            
+            // Update current task preview
+            if (status.current_task) {
+                document.getElementById('currentTaskPreview').innerHTML = `
+                    <div class="text-purple-400 font-bold mb-2">${status.current_task.arm_name}</div>
+                    <div class="code-block text-sm">${status.current_task.prompt}</div>
+                `;
+            }
+            
+            // Stop polling if done
+            if (!status.running) {
+                clearInterval(pollInterval);
+                document.getElementById('startBtn').classList.remove('hidden');
+                document.getElementById('stopBtn').classList.add('hidden');
+            }
+        }
+    </script>
+</body>
+</html>

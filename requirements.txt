@@ -1,0 +1,13 @@
+# TeachRL Dependencies
+# Core
+numpy>=1.21.0
+gymnasium>=0.28.0
+
+# Reinforcement Learning
+stable-baselines3>=2.0.0
+
+# Visualization
+matplotlib>=3.5.0
+
+# Optional: Progress bars
+tqdm>=4.60.0
