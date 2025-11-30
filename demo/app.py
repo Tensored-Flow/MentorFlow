@@ -20,6 +20,7 @@ from tasks.task_generator import (
     generate_task, generate_task_by_arm, generate_eval_dataset,
     FAMILY_NAMES, DIFFICULTY_NAMES, arm_to_name, NUM_FAMILIES, NUM_DIFFICULTIES
 )
+from learning_profile import LearningProfile
 from training.training_loop import (
     MetaTrainer,
     MetaTrainingConfig,
@@ -39,6 +40,8 @@ SUBJECT_FAMILY_MAP = {
     "physics": [15],
     "chemistry": [16],
 }
+
+learning_profile = LearningProfile(FAMILY_NAMES, DIFFICULTY_NAMES)
 
 # Global state for training
 training_state = {
@@ -155,6 +158,7 @@ def get_random_task():
     task = generate_task(family_id, difficulty_id, seed)
     
     return jsonify({
+        "arm_id": family_id * NUM_DIFFICULTIES + difficulty_id,
         "family": FAMILY_NAMES[family_id],
         "difficulty": DIFFICULTY_NAMES[difficulty_id],
         "prompt": task.human_prompt,
@@ -214,7 +218,22 @@ def check_answer():
     """Check if answer is correct."""
     data = request.json
     correct = data.get('selected') == data.get('correct_action')
+    family = data.get('family')
+    difficulty = data.get('difficulty')
+    arm_id = data.get('arm_id')
+    if family and difficulty:
+        learning_profile.update_profile(
+            family=family,
+            difficulty=difficulty,
+            arm_id=arm_id,
+            correct=correct,
+        )
     return jsonify({"correct": correct})
+
+
+@app.route('/api/profile')
+def get_profile():
+    return jsonify(learning_profile.serialize())
 
 
 @app.route('/api/train/start', methods=['POST'])
