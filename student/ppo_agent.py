@@ -52,3 +52,8 @@ class PPOAgent:
         env = StudentEnv(family_id=task_id, difficulty_id=difficulty)
         model = PPO.load(path, env=env)
         return cls(task_id=task_id, difficulty=difficulty, model=model)
+
+
+class StudentAgent(PPOAgent):
+    """Backward-compatible alias used by the training loop."""
+
