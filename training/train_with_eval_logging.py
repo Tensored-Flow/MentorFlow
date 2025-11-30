@@ -148,7 +148,7 @@ def train_with_eval_logging(
     
     logger.save_plot()
     logger.save_metrics()
-        summary_path = logger.save_dir / f"{config.model_name}_summary.txt"
+    summary_path = logger.save_dir / f"{config.model_name}_summary.txt"
     if logger.accuracies:
         with open(summary_path, "w") as f:
             f.write("Train with eval logging summary\n")

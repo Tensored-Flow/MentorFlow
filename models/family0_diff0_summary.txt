@@ -1,0 +1,7 @@
+Single-task PPO training summary
+family_id: 0
+difficulty_id: 0
+total_timesteps: 100
+final_accuracy: 0.2700
+reward_plot: models/family0_diff0_reward.png
+acc_plot: models/family0_diff0_accuracy.png

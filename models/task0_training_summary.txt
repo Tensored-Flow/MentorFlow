@@ -1,0 +1,4 @@
+Train single task summary
+total_timesteps: 2000
+final_accuracy: 0.2300
+reward_plot: models/task0_reward_curve.png

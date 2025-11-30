@@ -19,6 +19,7 @@ if ROOT_DIR not in sys.path:
 from student.student_env import StudentEnv
 from teacher.teacher_ucb import TeacherUCB
 from training.evaluate import evaluate_model
+from tasks.task_generator import NUM_FAMILIES, NUM_DIFFICULTIES
 
 PPO_CFG = dict(
     learning_rate=3e-4,
@@ -91,8 +92,9 @@ class MinibatchProgressCallback(BaseCallback):
 
 
 def _arm_to_indices(arm_idx: int) -> Tuple[int, int]:
-    task_id = arm_idx // 3
-    difficulty = arm_idx % 3
+    """Convert arm index to (family_id, difficulty_id)."""
+    task_id = arm_idx // NUM_DIFFICULTIES
+    difficulty = arm_idx % NUM_DIFFICULTIES
     return task_id, difficulty
 
 
@@ -106,8 +108,9 @@ def train_with_teacher(
     torch.set_num_threads(1)
     os.makedirs("models", exist_ok=True)
 
-    num_tasks = 5
-    num_difficulties = 3
+    # Use actual number of families from task generator (now 18)
+    num_tasks = NUM_FAMILIES
+    num_difficulties = NUM_DIFFICULTIES
     num_arms = num_tasks * num_difficulties
     arms = list(range(num_arms))
     teacher = TeacherUCB(num_arms=num_arms)
@@ -213,7 +216,7 @@ def train_with_teacher(
     plt.figure(figsize=(6, 6))
     plt.imshow(curriculum_counts, cmap="Blues")
     plt.colorbar(label="times chosen")
-    plt.xticks(range(num_difficulties), [0, 1, 2])
+    plt.xticks(range(num_difficulties), range(num_difficulties))
     plt.yticks(range(num_tasks), [f"task {i}" for i in range(num_tasks)])
     plt.xlabel("difficulty")
     plt.ylabel("task")

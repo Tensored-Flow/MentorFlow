@@ -10,6 +10,13 @@ from pathlib import Path
 import json
 import time
 
+try:
+    from tqdm import tqdm
+    HAS_TQDM = True
+except ImportError:
+    HAS_TQDM = False
+    tqdm = None  # Will be checked before use
+
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -240,7 +247,12 @@ class MetaTrainer:
             print(f"Teacher strategy: {self.config.teacher_strategy}")
             print("=" * 60)
         
-        for step in range(self.config.num_meta_steps):
+        # Progress bar for meta-training iterations
+        iterator = range(self.config.num_meta_steps)
+        if HAS_TQDM and self.config.verbose:
+            iterator = tqdm(iterator, desc="Meta-training", unit="step")
+        
+        for step in iterator:
             # 1. Evaluate student before training
             acc_before = self.student.evaluate(self.eval_tasks)
             
