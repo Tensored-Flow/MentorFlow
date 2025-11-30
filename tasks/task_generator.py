@@ -54,7 +54,7 @@ DIFFICULTY_NAMES = [
 ]
 
 
-@dataclass
+@dataclass(slots=True)
 class TaskSpec:
     """A single generated task instance."""
 
@@ -180,28 +180,84 @@ def _task_from_values(
 
 def generate_var_trace(level: int, rng: random.Random) -> TaskSpec:
     level = _normalize_difficulty(level)
+    variant = rng.randint(0, 2)  # pick among a few lightweight templates
 
     if level == 1:
-        a = rng.randint(2, 9)
-        b = rng.randint(2, 9)
-        prompt = f"a = {a}\nb = {b}\na = a + b\nWhat is a?"
-        result = a + b
+        if variant == 0:
+            a = rng.randint(2, 9)
+            b = rng.randint(2, 9)
+            prompt = f"a = {a}\nb = {b}\na = a + b\nWhat is a?"
+            result = a + b
+        elif variant == 1:
+            a = rng.randint(3, 7)
+            b = rng.randint(1, 4)
+            prompt = f"a = {a}\na += {b}\na -= 1\nWhat is a?"
+            result = a + b - 1
+        else:
+            a = rng.randint(2, 6)
+            b = rng.randint(1, 3)
+            prompt = f"a = {a}\na = a * 2 - {b}\nWhat is a?"
+            result = a * 2 - b
     elif level == 2:
-        x = rng.randint(3, 8)
-        y = x + rng.randint(2, 5)
-        z = y - rng.randint(1, 3)
-        w = z * 2 - x
-        prompt = f"x = {x}\ny = x + {y - x}\nz = y - {y - z}\nw = z * 2 - x\nWhat is w?"
-        result = w
+        if variant == 0:
+            x = rng.randint(3, 8)
+            y = x + rng.randint(2, 5)
+            z = y - rng.randint(1, 3)
+            w = z * 2 - x
+            prompt = f"x = {x}\ny = x + {y - x}\nz = y - {y - z}\nw = z * 2 - x\nWhat is w?"
+            result = w
+        elif variant == 1:
+            x = rng.randint(2, 6)
+            y = rng.randint(2, 6)
+            z = rng.randint(1, 4)
+            prompt = (
+                f"x = {x}\ny = {y}\n"
+                "for i in range(2):\n"
+                "    x = x + y\n"
+                f"    y = y - {z}\n"
+                "What is x?"
+            )
+            result = (x + y) + (x + y - z)
+        else:
+            base = rng.randint(2, 6)
+            inc = rng.randint(1, 3)
+            dec = rng.randint(1, 2)
+            prompt = f"val = {base}\nval += {inc}\nval *= 2\nval -= {dec}\nWhat is val?"
+            result = ((base + inc) * 2) - dec
     elif level == 3:
-        base = rng.randint(2, 6)
-        inc = rng.randint(2, 4)
-        dec = rng.randint(1, 3)
-        a = base + inc
-        b = (a - dec) * 2
-        c = b + (a % dec)
-        prompt = f"a = {base} + {inc}\nb = (a - {dec}) * 2\nc = b + (a % {dec})\nWhat is c?"
-        result = c
+        if variant == 0:
+            base = rng.randint(2, 6)
+            inc = rng.randint(2, 4)
+            dec = rng.randint(1, 3)
+            a = base + inc
+            b = (a - dec) * 2
+            c = b + (a % dec)
+            prompt = f"a = {base} + {inc}\nb = (a - {dec}) * 2\nc = b + (a % {dec})\nWhat is c?"
+            result = c
+        elif variant == 1:
+            vals = [rng.randint(1, 5) for _ in range(3)]
+            prompt = (
+                f"a, b, c = {vals}\n"
+                "a = a + b\n"
+                "b = b + c\n"
+                "c = a + b\n"
+                "What is c?"
+            )
+            a, b, c = vals
+            a = a + b
+            b = b + c
+            c = a + b
+            result = c
+        else:
+            nums = [rng.randint(1, 4) for _ in range(4)]
+            prompt = (
+                f"nums = {nums}\n"
+                "total = 0\n"
+                "for i, v in enumerate(nums):\n"
+                "    total += v * (i+1)\n"
+                "What is total?"
+            )
+            result = sum(v * (i + 1) for i, v in enumerate(nums))
     elif level == 4:
         seq = [rng.randint(1, 9) for _ in range(4)]
         acc = 0
@@ -254,19 +310,33 @@ def generate_var_trace(level: int, rng: random.Random) -> TaskSpec:
 
 def generate_if_cond(level: int, rng: random.Random) -> TaskSpec:
     level = _normalize_difficulty(level)
+    variant = rng.randint(0, 2)
     choices = ["True", "False", "Depends", "Error"]
 
     if level == 1:
-        x = rng.randint(1, 9)
-        y = x + rng.randint(1, 4)
-        prompt = f"x = {x}\ny = {y}\nIs x < y?"
-        result = x < y
+        if variant == 0:
+            x = rng.randint(1, 9)
+            y = x + rng.randint(1, 4)
+            prompt = f"x = {x}\ny = {y}\nIs x < y?"
+            result = x < y
+        else:
+            a = rng.randint(1, 5)
+            b = rng.randint(1, 5)
+            prompt = f"a = {a}\nb = {b}\nIs (a * 2) >= (b + 1)?"
+            result = (a * 2) >= (b + 1)
     elif level == 2:
-        a = rng.randint(2, 6)
-        b = rng.randint(1, 4)
-        c = rng.randint(3, 9)
-        prompt = f"a = {a}\nb = {b}\nc = {c}\nIs (a + b > c) and (c % 2 == 1)?"
-        result = (a + b > c) and (c % 2 == 1)
+        if variant == 0:
+            a = rng.randint(2, 6)
+            b = rng.randint(1, 4)
+            c = rng.randint(3, 9)
+            prompt = f"a = {a}\nb = {b}\nc = {c}\nIs (a + b > c) and (c % 2 == 1)?"
+            result = (a + b > c) and (c % 2 == 1)
+        else:
+            x = rng.randint(2, 6)
+            y = rng.randint(2, 6)
+            z = rng.randint(1, 4)
+            prompt = f"x={x}, y={y}, z={z}\nIs (x - z < y) or (y % 2 == 0)?"
+            result = (x - z < y) or (y % 2 == 0)
     elif level == 3:
         x = rng.randint(2, 6)
         y = rng.randint(2, 6)
@@ -314,11 +384,18 @@ def generate_if_cond(level: int, rng: random.Random) -> TaskSpec:
 
 def generate_loop_count(level: int, rng: random.Random) -> TaskSpec:
     level = _normalize_difficulty(level)
+    variant = rng.randint(0, 2)
 
     if level == 1:
-        n = rng.randint(2, 5)
-        prompt = f"count = 0\nfor i in range({n}):\n    count += 1\nWhat is count?"
-        result = n
+        if variant == 0:
+            n = rng.randint(2, 5)
+            prompt = f"count = 0\nfor i in range({n}):\n    count += 1\nWhat is count?"
+            result = n
+        else:
+            n = rng.randint(2, 5)
+            start = rng.randint(0, 2)
+            prompt = f"count = {start}\nfor i in range({n}):\n    count += i\nWhat is count?"
+            result = start + sum(range(n))
     elif level == 2:
         start = rng.randint(8, 14)
         step = rng.randint(2, 4)
@@ -504,11 +581,18 @@ def _build_language_task(family_id: int, language: str, level: int, rng: random.
         elif level == 4:
             base = [1, 2, 3]
             alias = base
-            comp = [x * alias[0] for x in base if not alias.append(0)]
+            # Iterate over a snapshot to avoid unbounded list growth while still demonstrating alias side effects
+            comp = []
+            for x in list(base):  # snapshot prevents infinite growth
+                alias.append(0)  # mutates both alias and base
+                comp.append(x * alias[0])
             prompt = (
                 "base = [1, 2, 3]\n"
                 "alias = base\n"
-                "comp = [x * alias[0] for x in base if not alias.append(0)]\n"
+                "comp = []\n"
+                "for x in list(base):\n"
+                "    alias.append(0)\n"
+                "    comp.append(x * alias[0])\n"
                 "What is comp[-1]?"
             )
             result = comp[-1]
@@ -806,17 +890,29 @@ def generate_regex(level: int, rng: random.Random) -> TaskSpec:
 
 def generate_math_algebra(level: int, rng: random.Random) -> TaskSpec:
     level = _normalize_difficulty(level)
+    variant = rng.randint(0, 2)
 
     if level == 1:
-        a = rng.randint(1, 5)
-        b = rng.randint(1, 5)
-        prompt = f"Solve: x = {a} + {b}"
-        result = a + b
+        if variant == 0:
+            a = rng.randint(1, 5)
+            b = rng.randint(1, 5)
+            prompt = f"Solve: x = {a} + {b}"
+            result = a + b
+        else:
+            a = rng.randint(2, 6)
+            prompt = f"Solve: x - {a} = {a}"
+            result = a + a
     elif level == 2:
-        a = rng.randint(2, 6)
-        b = rng.randint(1, 4)
-        prompt = f"Solve: 2x + {b} = {2*a + b}"
-        result = a
+        if variant == 0:
+            a = rng.randint(2, 6)
+            b = rng.randint(1, 4)
+            prompt = f"Solve: 2x + {b} = {2*a + b}"
+            result = a
+        else:
+            a = rng.randint(2, 6)
+            b = rng.randint(1, 4)
+            prompt = f"Solve: 3x - {b} = {3*a - b}"
+            result = a
     elif level == 3:
         a = rng.randint(2, 4)
         b = rng.randint(1, 3)
@@ -847,12 +943,19 @@ def generate_math_algebra(level: int, rng: random.Random) -> TaskSpec:
 
 def generate_physics(level: int, rng: random.Random) -> TaskSpec:
     level = _normalize_difficulty(level)
+    variant = rng.randint(0, 1)
 
     if level == 1:
-        u = rng.randint(2, 8)
-        t = rng.randint(2, 6)
-        prompt = f"Constant velocity motion: v={u} m/s, t={t}s. Displacement?"
-        result = u * t
+        if variant == 0:
+            u = rng.randint(2, 8)
+            t = rng.randint(2, 6)
+            prompt = f"Constant velocity motion: v={u} m/s, t={t}s. Displacement?"
+            result = u * t
+        else:
+            d = rng.randint(10, 30)
+            t = rng.randint(2, 5)
+            prompt = f"Distance={d}m in {t}s at constant speed. What is speed?"
+            result = d / t
     elif level == 2:
         u = rng.randint(2, 6)
         a = rng.randint(1, 4)
@@ -891,22 +994,43 @@ def generate_physics(level: int, rng: random.Random) -> TaskSpec:
 
 def generate_chemistry(level: int, rng: random.Random) -> TaskSpec:
     level = _normalize_difficulty(level)
+    variant = rng.randint(0, 1)
 
     if level == 1:
-        prompt = "How many H atoms in H2O?"
-        result = 2
+        if variant == 0:
+            prompt = "How many H atoms in H2O?"
+            result = 2
+        else:
+            prompt = "How many O atoms in CO2?"
+            result = 2
     elif level == 2:
-        prompt = "Balance: H2 + O2 -> H2O. Mole ratio H2:O2?"
-        result = 2
+        if variant == 0:
+            prompt = "Balance: H2 + O2 -> H2O. Mole ratio H2:O2?"
+            result = 2
+        else:
+            prompt = "Balance: N2 + 3H2 -> 2NH3. Mole ratio H2:N2?"
+            result = 3
     elif level == 3:
-        prompt = "1 mol CaCO3 decomposes -> CaO + CO2. How many moles CO2?"
-        result = 1
+        if variant == 0:
+            prompt = "1 mol CaCO3 decomposes -> CaO + CO2. How many moles CO2?"
+            result = 1
+        else:
+            prompt = "2KClO3 -> 2KCl + 3O2. Moles O2 from 2 mol KClO3?"
+            result = 3
     elif level == 4:
-        prompt = "2Al + 3Cl2 -> 2AlCl3. If 4 mol Al react fully, moles of AlCl3?"
-        result = 4
+        if variant == 0:
+            prompt = "2Al + 3Cl2 -> 2AlCl3. If 4 mol Al react fully, moles of AlCl3?"
+            result = 4
+        else:
+            prompt = "C + O2 -> CO2. If 5 mol O2 available with excess C, moles CO2?"
+            result = 5
     else:
-        prompt = "C6H12O6 + 6O2 -> 6CO2 + 6H2O. Moles of O2 needed for 2 mol glucose?"
-        result = 12
+        if variant == 0:
+            prompt = "C6H12O6 + 6O2 -> 6CO2 + 6H2O. Moles of O2 needed for 2 mol glucose?"
+            result = 12
+        else:
+            prompt = "Fe2O3 + 3CO -> 2Fe + 3CO2. If 3 mol Fe2O3 react, moles Fe?"
+            result = 6
 
     distractors = _generate_numeric_distractors(result, rng)
     return _task_from_values(16, level, prompt, result, distractors, rng)
@@ -919,19 +1043,36 @@ def generate_chemistry(level: int, rng: random.Random) -> TaskSpec:
 
 def generate_probability(level: int, rng: random.Random) -> TaskSpec:
     level = _normalize_difficulty(level)
+    variant = rng.randint(0, 1)
 
     if level == 1:
-        prompt = "A fair coin is flipped. P(heads)?"
-        result = 0.5
+        if variant == 0:
+            prompt = "A fair coin is flipped. P(heads)?"
+            result = 0.5
+        else:
+            prompt = "Roll 1d4. P(rolling a 1)?"
+            result = 0.25
     elif level == 2:
-        prompt = "Roll 1d6. P(rolling an even number)?"
-        result = 0.5
+        if variant == 0:
+            prompt = "Roll 1d6. P(rolling an even number)?"
+            result = 0.5
+        else:
+            prompt = "Pick a card from a standard deck. P(card is heart)?"
+            result = 13 / 52
     elif level == 3:
-        prompt = "Two fair coins. P(exactly one head)?"
-        result = 0.5
+        if variant == 0:
+            prompt = "Two fair coins. P(exactly one head)?"
+            result = 0.5
+        else:
+            prompt = "Roll 1d6 twice. P(sum equals 7)?"
+            result = 6 / 36
     elif level == 4:
-        prompt = "Deck 52 cards. Draw 2 without replacement. P(both hearts)?"
-        result = (13 / 52) * (12 / 51)
+        if variant == 0:
+            prompt = "Deck 52 cards. Draw 2 without replacement. P(both hearts)?"
+            result = (13 / 52) * (12 / 51)
+        else:
+            prompt = "Bag: 3 red, 5 blue. Draw 2 without replacement. P(no red)?"
+            result = (5 / 8) * (4 / 7)
     else:
         prompt = "Bag: 2R,3B balls. Draw 2 without replacement. P(first red | second red)?"
         # P(first red and second red)/P(second red)
@@ -1000,6 +1141,20 @@ def generate_eval_dataset(tasks_per_type: int = 5, seed: int = 42) -> List[TaskS
                 dataset.append(generate_task(family_id, difficulty_id, task_seed))
 
     return dataset
+
+
+def iter_eval_dataset(tasks_per_type: int = 5, seed: int = 42):
+    """
+    Memory-light iterator over the eval dataset.
+    
+    Useful when you want to stream tasks instead of materialising the full list.
+    """
+    rng = random.Random(seed)
+    for family_id in range(NUM_FAMILIES):
+        for difficulty_id in range(1, NUM_DIFFICULTIES + 1):
+            for _ in range(tasks_per_type):
+                task_seed = rng.randint(0, 2**31 - 1)
+                yield generate_task(family_id, difficulty_id, task_seed)
 
 
 def arm_to_name(arm_id: int) -> str:

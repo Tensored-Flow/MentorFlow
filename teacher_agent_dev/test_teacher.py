@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+import importlib
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -199,6 +200,20 @@ def test_task_generator():
     print(f"   Generated tasks for {len(topics)} topics × {len(difficulties)} difficulties")
 
 
+def test_compare_strategies_uses_ppo_student():
+    """Ensure compare_strategies uses PPO student wrapper (not LM student)."""
+    print("Testing compare_strategies PPO student selection...", end=" ")
+    
+    compare_strategies = importlib.import_module("compare_strategies")
+    
+    assert getattr(compare_strategies, "USE_PPO_STUDENT", False), (
+        "PPOStudentWrapper import failed; install stable-baselines3/torch to run comparisons"
+    )
+    assert hasattr(compare_strategies, "PPOStudentWrapper"), "PPOStudentWrapper missing"
+    
+    print("✅ PASSED")
+
+
 def run_all_tests():
     """Run all tests."""
     print("=" * 70)
@@ -214,6 +229,7 @@ def run_all_tests():
         test_teacher_action_encoding,
         test_teacher_exploration,
         test_teacher_exploitation,
+        test_compare_strategies_uses_ppo_student,
     ]
     
     passed = 0
@@ -243,4 +259,3 @@ def run_all_tests():
 if __name__ == "__main__":
     success = run_all_tests()
     sys.exit(0 if success else 1)
-

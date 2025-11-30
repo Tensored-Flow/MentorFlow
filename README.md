@@ -1,72 +1,58 @@
----
-title: MentorFlow
-emoji: 🎓
-colorFrom: blue
-colorTo: purple
-sdk: gradio
-sdk_version: 4.0.0
-app_file: app.py
-pinned: false
-license: mit
-hardware: gpu-t4
----
+# MentorFlow: RL Teacher-Student System (Demo)
 
-# MentorFlow - Teacher-Student RL System
+## What This Project Delivers
+- **RL Teacher with Curriculum Discovery**: UCB-based teacher learns optimal task ordering across topics/difficulties; bandit-driven exploration vs. exploitation, exposed via `/api/train/*` for live dashboards.
+- **Configurable Students**:
+  - **Mock Student** (fast): Ebbinghaus-style forgetting, per-topic skill, transfer learning; ideal for demos and plots.
+  - **PPO Student** (RL): Stable Baselines PPO wrapper over `StudentEnv` with improved training signal, stochasticity, and forgetting; toggleable in the UI/CLI.
+- **Task Generators**:
+  - **Medium Generator (default)**: STEM-heavy, LM-light, multiple templates per topic/difficulty for a large bank without language-model reliance.
+  - **Legacy Mock Generator**: Simple baseline, still available.
+- **Strategy Comparisons**: Random vs. Progressive vs. Teacher curriculum, with resampled evals for variance, difficulty-aware plots, and PNG export.
+- **Frontend Integration**: Next.js frontend proxies to Flask backend (`demo/app.py`) for live teacher stats, training controls, and status dashboards.
 
-A meta-curriculum reinforcement learning system where an AI Teacher Agent learns to select optimal educational tasks to train an AI Student Agent.
-
-## 🚀 Features
-
-- **Three Training Strategies**: Compare Random, Progressive, and Teacher-guided curriculum
-- **LM Student (DistilBERT)**: Real neural network learning with memory decay
-- **GPU Support**: Fast training with CUDA acceleration
-- **Interactive Comparison**: Visualize learning curves and performance metrics
-
-## 📊 Usage
-
-1. **Set Parameters**:
-   - Iterations: Number of training iterations (50-500)
-   - Seed: Random seed for reproducibility
-   - Device: Choose GPU (cuda) or CPU
-
-2. **Run Comparison**:
-   - Click "Run Comparison" to start training
-   - Monitor progress in the output text
-   - View generated comparison plots
-
-3. **Analyze Results**:
-   - Learning curves show how each strategy improves
-   - Difficult question performance shows final accuracy
-   - Curriculum diversity shows topic coverage
-
-## ⚡ Performance
-
-- **With GPU**: ~5-10 minutes for 500 iterations
-- **With CPU**: ~15-30 minutes for 500 iterations
-
-## 📁 Project Structure
-
-```
-MentorFlow/
-├── app.py                      # Gradio web interface
-├── teacher_agent_dev/          # Teacher agent system
-│   ├── compare_strategies.py  # Main comparison script
-│   ├── teacher_agent.py       # UCB bandit teacher
-│   └── ...
-├── student_agent_dev/          # LM Student system
-│   ├── student_agent.py       # DistilBERT student
-│   └── ...
-└── requirements_hf.txt        # Dependencies
+## How to Run (Local Demo)
+1) **Backend (Flask)**
+```bash
+cd /Users/leonardowang/MentorFlow
+FLASK_APP=demo/app.py FLASK_ENV=production python3 demo/app.py  # listens on 5050
 ```
 
-## 🔧 Technical Details
+2) **Frontend (Next.js)**
+```bash
+cd frontend
+FLASK_API_BASE_URL=http://localhost:5050 npm install   # first time
+FLASK_API_BASE_URL=http://localhost:5050 npm run dev    # or npm run build && npm run start
+```
+Open the shown URL; training dashboards will hit `/api/train/*` through the proxy.
 
-- **Teacher Agent**: UCB (Upper Confidence Bound) multi-armed bandit
-- **Student Agent**: DistilBERT with online learning
-- **Memory Decay**: Ebbinghaus forgetting curve
-- **Task Generator**: Procedural generation with 15 topics × 7 difficulties
+## How to Run Strategy Comparisons (CLI)
+- Fast mock student + medium generator (default):
+```bash
+./venv/bin/python teacher_agent_dev/compare_strategies.py --iterations 200 --deterministic
+```
+- Toggle PPO student:
+```bash
+./venv/bin/python teacher_agent_dev/compare_strategies.py --iterations 200 --deterministic --resample-eval
+```
+- Legacy mock generator:
+```bash
+./venv/bin/python teacher_agent_dev/compare_strategies.py --iterations 200 --use-mock-generator --use-mock-student
+```
+Flags: `--use-mock-student`, `--use-mock-generator`, `--resample-eval`, `--seed`, `--iterations`.
 
-## 📖 More Information
+## Notable Engineering Points
+- **Medium Task Generator**: Multiple templates per topic/difficulty; LM-light; supports variance without heavy models.
+- **PPO Wrapper Upgrades**: Longer rollouts, higher entropy for exploration, more eval episodes, stochastic predictions, and explicit forgetting to avoid linear/flat curves.
+- **Plot Hardening**: Smoothing guards for short runs; resampled eval sets to inject variance.
+- **Deployment Safety**: HF deploy scripts gated; primary flow is local/backend + Next frontend.
+- **Frontend Proxy**: Next API routes point to `FLASK_API_BASE_URL` (default `http://localhost:5050`).
 
-See the main repository for detailed documentation and development guides.
+## Tests / Smoke
+- Quick teacher tests: `./venv/bin/python teacher_agent_dev/test_teacher.py`
+- End-to-end comparison: see CLI commands above (produces `comparison_all_strategies.png`).
 
+## What to Demo
+- Launch backend + frontend; start training via UI to show live teacher metrics (accuracies, rewards, curriculum heatmap).
+- Run strategy comparison and display the saved plot.
+- Adjust retention/strategy toggles in the UI to show student/teacher adaptability.

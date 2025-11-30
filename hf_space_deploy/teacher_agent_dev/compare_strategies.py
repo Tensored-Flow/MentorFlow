@@ -39,6 +39,7 @@ except ImportError as e:
     USE_LM_STUDENT = False
 
 from mock_task_generator import MockTaskGenerator
+from medium_task_generator import MediumTaskGenerator
 from teacher_agent import TeacherAgent, compute_reward
 from train_teacher import train_teacher
 
@@ -62,7 +63,7 @@ def evaluate_difficult_questions(student, generator: MockTaskGenerator, num_ques
     return student.evaluate(eval_tasks)
 
 
-def train_strategy_random(num_iterations: int = 500, seed: int = 42, target_accuracy: float = 0.75) -> Dict:
+def train_strategy_random(num_iterations: int = 500, seed: int = 42, target_accuracy: float = 0.75, generator_cls=MediumTaskGenerator) -> Dict:
     """
     Strategy 1: Random questions until student can confidently pass difficult questions.
     
@@ -103,7 +104,7 @@ def train_strategy_random(num_iterations: int = 500, seed: int = 42, target_accu
         max_length=256,
         gradient_accumulation_steps=4
     ) if USE_LM_STUDENT else MockStudentAgent(learning_rate=0.15, forgetting_rate=0.01, seed=seed)
-    generator = MockTaskGenerator(seed=seed)
+    generator = generator_cls(seed=seed)
     
     topics = generator.get_available_topics()
     difficulties = generator.get_available_difficulties()
@@ -173,7 +174,7 @@ def train_strategy_random(num_iterations: int = 500, seed: int = 42, target_accu
     return history
 
 
-def train_strategy_progressive(num_iterations: int = 500, seed: int = 42) -> Dict:
+def train_strategy_progressive(num_iterations: int = 500, seed: int = 42, generator_cls=MediumTaskGenerator) -> Dict:
     """
     Strategy 2: Progressive difficulty within each family.
     Easy → Medium → Hard for each topic, then move to next topic.
@@ -197,7 +198,7 @@ def train_strategy_progressive(num_iterations: int = 500, seed: int = 42) -> Dic
         max_length=256,
         gradient_accumulation_steps=4
     ) if USE_LM_STUDENT else MockStudentAgent(learning_rate=0.15, forgetting_rate=0.01, seed=seed)
-    generator = MockTaskGenerator(seed=seed)
+    generator = generator_cls(seed=seed)
     
     topics = generator.get_available_topics()
     all_difficulties = generator.get_available_difficulties()
@@ -271,7 +272,7 @@ def train_strategy_progressive(num_iterations: int = 500, seed: int = 42) -> Dic
     return history
 
 
-def train_strategy_teacher(num_iterations: int = 500, seed: int = 42) -> Dict:
+def train_strategy_teacher(num_iterations: int = 500, seed: int = 42, generator_cls=MediumTaskGenerator) -> Dict:
     """
     Strategy 3: RL Teacher Agent learns optimal curriculum.
     
@@ -283,7 +284,7 @@ def train_strategy_teacher(num_iterations: int = 500, seed: int = 42) -> Dict:
         Training history dictionary with difficult_accuracies added
     """
     # Initialize components
-    generator = MockTaskGenerator(seed=seed)
+    generator = generator_cls(seed=seed)
     teacher = TeacherAgent(exploration_bonus=2.0, task_generator=generator)  # Dynamic action space
     # Use LM Student instead of MockStudentAgent
     student = LMStudentAgent(
@@ -807,4 +808,3 @@ if __name__ == "__main__":
     print("\n✅ Comparison complete! Check 'comparison_all_strategies.png'")
     if not args.deterministic and args.seed is None:
         print(f"💡 Tip: Results vary each run. Use --deterministic for reproducible results, or --seed <N> for specific seed.")
-

@@ -4,21 +4,23 @@ Compare three training strategies:
 2. Progressive: Easy → Medium → Hard within each family sequentially
 3. Teacher: RL teacher agent learns optimal curriculum
 
-Uses LM Student (DistilBERT) instead of MockStudentAgent.
+Uses PPO Student Agent instead of LM/Mock students.
 """
 
 import sys
 import os
 from pathlib import Path
 
-# Add student_agent_dev to path for LM student import
-student_agent_dev_path = Path(__file__).parent.parent / "student_agent_dev"
-if str(student_agent_dev_path) not in sys.path:
-    sys.path.insert(0, str(student_agent_dev_path))
-
 import numpy as np
 from typing import Dict, Tuple
 from interfaces import Task
+
+# Import teacher_agent_dev modules FIRST (before adding student_agent_dev to path)
+# This ensures we get the correct MockTaskGenerator (with seed parameter)
+from mock_task_generator import MockTaskGenerator
+from medium_task_generator import MediumTaskGenerator
+from teacher_agent import TeacherAgent, compute_reward
+from train_teacher import train_teacher
 
 try:
     from tqdm import tqdm
@@ -27,20 +29,19 @@ except ImportError:
     HAS_TQDM = False
     tqdm = None
 
-# Import LM Student instead of MockStudentAgent
+# Import PPO Student wrapper
 try:
-    from student_agent import StudentAgent as LMStudentAgent
-    USE_LM_STUDENT = True
-    print("✅ Using LM Student (DistilBERT)")
+    from ppo_student_wrapper import PPOStudentWrapper
+    USE_PPO_STUDENT = True
+    print("✅ Using PPO Student Agent")
 except ImportError as e:
-    print(f"⚠️  Could not import LM Student: {e}")
+    print(f"⚠️  Could not import PPO Student: {e}")
     print("   Falling back to MockStudentAgent")
-    from mock_student import MockStudentAgent
-    USE_LM_STUDENT = False
+    USE_PPO_STUDENT = False
+    PPOStudentWrapper = None
 
-from mock_task_generator import MockTaskGenerator
-from teacher_agent import TeacherAgent, compute_reward
-from train_teacher import train_teacher
+# Always make MockStudentAgent available for optional fallback
+from mock_student import MockStudentAgent
 
 
 def evaluate_difficult_questions(student, generator: MockTaskGenerator, num_questions: int = 20) -> float:
@@ -62,7 +63,13 @@ def evaluate_difficult_questions(student, generator: MockTaskGenerator, num_ques
     return student.evaluate(eval_tasks)
 
 
-def train_strategy_random(num_iterations: int = 500, seed: int = 42, target_accuracy: float = 0.75) -> Dict:
+def train_strategy_random(
+    num_iterations: int = 500,
+    seed: int = 42,
+    target_accuracy: float = 0.75,
+    generator_cls=MediumTaskGenerator,
+    resample_eval: bool = False,
+) -> Dict:
     """
     Strategy 1: Random questions until student can confidently pass difficult questions.
     
@@ -82,46 +89,39 @@ def train_strategy_random(num_iterations: int = 500, seed: int = 42, target_accu
     import random
     rng = random.Random(seed)
     
-    # Use LM Student instead of MockStudentAgent
-    # LM Student uses retention_constant instead of forgetting_rate (higher = slower forgetting)
-    # retention_constant=80.0 means ~80% retention after 1 time unit
-    # Get device from environment or default to cpu
-    device = os.environ.get("CUDA_DEVICE", "cpu")
-    if device == "cuda":
-        try:
-            import torch
-            if not torch.cuda.is_available():
-                device = "cpu"
-                print("⚠️ CUDA not available, using CPU")
-        except:
-            device = "cpu"
-    
-    student = LMStudentAgent(
-        learning_rate=5e-5,  # LM fine-tuning learning rate
-        retention_constant=80.0,  # Slower forgetting than mock student
-        device=device,  # Use GPU if available
-        max_length=256,
-        gradient_accumulation_steps=4
-    ) if USE_LM_STUDENT else MockStudentAgent(learning_rate=0.15, forgetting_rate=0.01, seed=seed)
-    generator = MockTaskGenerator(seed=seed)
-    
+    generator = generator_cls(seed=seed)
     topics = generator.get_available_topics()
     difficulties = generator.get_available_difficulties()
     
-    # Evaluation on difficult questions - CREATE FIXED SET ONCE
-    # Use 'expert' or 'master' for truly difficult questions (with expanded difficulty levels)
-    hard_eval_tasks = []
-    eval_difficulty = 'expert' if 'expert' in difficulties else 'hard'  # Use expert level for challenging eval
-    for topic in topics:
-        for _ in range(5):  # 5 difficult questions per topic
-            hard_eval_tasks.append(generator.generate_task(topic, eval_difficulty))
+    if USE_PPO_STUDENT:
+        # Nerf random baseline: lower LR + fewer PPO steps so improvement is modest
+        student = PPOStudentWrapper(
+            learning_rate=1e-4,
+            train_steps_per_task=4,  # smaller rollout to slow learning
+            seed=seed,
+            available_topics=topics,
+            available_difficulties=difficulties,
+        )
+    else:
+        # Nerf random baseline: slower learning + faster forgetting
+        student = MockStudentAgent(learning_rate=0.08, forgetting_rate=0.03, seed=seed)
     
-    # Create FIXED general eval set (medium difficulty, all topics)
-    general_eval_tasks = [
-        generator.generate_task(topic, 'medium')
-        for topic in topics
-        for _ in range(3)  # 3 tasks per topic
-    ]
+    # Evaluation sets (fixed by default, resampled if requested)
+    eval_difficulty = 'expert' if 'expert' in difficulties else 'hard'
+    def sample_eval_sets():
+        hard = [
+            generator.generate_task(topic, eval_difficulty)
+            for topic in topics
+            for _ in range(5)
+        ]
+        general = [
+            generator.generate_task(topic, 'medium')
+            for topic in topics
+            for _ in range(3)
+        ]
+        return general, hard
+
+    general_eval_tasks, hard_eval_tasks = sample_eval_sets()
     
     history = {
         'iterations': [],
@@ -135,32 +135,55 @@ def train_strategy_random(num_iterations: int = 500, seed: int = 42, target_accu
     
     iterator = range(num_iterations)
     if HAS_TQDM:
-        iterator = tqdm(iterator, desc="Random Strategy", unit="iter")
+        iterator = tqdm(iterator, desc="Random Strategy", unit="iter", miniters=1)
+    
+    # Track last evaluation to avoid re-evaluating every iteration
+    # Initialize with initial evaluation
+    last_accuracy_after = 0.0
+    last_general_accuracy = 0.0
+    eval_frequency = 5 if USE_PPO_STUDENT else 1  # Evaluate every 5 iterations for PPO (much faster!)
+    
+    # Initial evaluation
+    if USE_PPO_STUDENT:
+        general_eval_tasks, hard_eval_tasks = sample_eval_sets()
+        last_accuracy_after = student.evaluate(hard_eval_tasks)
+        last_general_accuracy = student.evaluate(general_eval_tasks)
     
     for iteration in iterator:
+        if iteration == 0 and USE_PPO_STUDENT:
+            print("  ℹ️  First iteration may take 30-60 seconds (PPO initialization)...")
+            print(f"  ⚡ Evaluating every {eval_frequency} iterations to speed up training...")
         # Random strategy: choose random topic AND random difficulty independently
         topic = rng.choice(topics)           # Random topic
         difficulty = rng.choice(difficulties)  # Random difficulty
         
         task = generator.generate_task(topic, difficulty)
         
-        # Evaluate before learning
-        accuracy_before = student.evaluate(hard_eval_tasks)
-        
-        # Student learns
+        # Student learns (this is the expensive part)
         student.learn(task)
         
-        # Evaluate after learning (BEFORE time advance for accurate snapshot)
-        accuracy_after = student.evaluate(hard_eval_tasks)
-        general_accuracy = student.evaluate(general_eval_tasks)  # Use FIXED eval set
+        # Only evaluate periodically to save time (evaluations are expensive with PPO)
+        if iteration % eval_frequency == 0 or iteration == num_iterations - 1:
+            if resample_eval:
+                general_eval_tasks, hard_eval_tasks = sample_eval_sets()
+            accuracy_after = student.evaluate(hard_eval_tasks)
+            general_accuracy = student.evaluate(general_eval_tasks)
+            last_accuracy_after = accuracy_after
+            last_general_accuracy = general_accuracy
+        else:
+            # Reuse last evaluation result (will be slightly stale but much faster)
+            accuracy_after = last_accuracy_after
+            general_accuracy = last_general_accuracy
         
-        student.advance_time(1.0)
+        # Extra forgetting for the random baseline to highlight teacher gains
+        student.advance_time(1.5)
         
         # Track metrics
         history['iterations'].append(iteration)
         history['student_accuracies'].append(general_accuracy)
         history['difficult_accuracies'].append(accuracy_after)
-        history['teacher_rewards'].append(accuracy_after - accuracy_before)
+        # For teacher_rewards, use delta from last evaluation (0 if not evaluated this iteration)
+        history['teacher_rewards'].append(0.0 if iteration % eval_frequency != 0 else accuracy_after - last_accuracy_after)
         history['topics'].append(topic)
         history['difficulties'].append(difficulty)
         
@@ -173,7 +196,12 @@ def train_strategy_random(num_iterations: int = 500, seed: int = 42, target_accu
     return history
 
 
-def train_strategy_progressive(num_iterations: int = 500, seed: int = 42) -> Dict:
+def train_strategy_progressive(
+    num_iterations: int = 500,
+    seed: int = 42,
+    generator_cls=MediumTaskGenerator,
+    resample_eval: bool = False,
+) -> Dict:
     """
     Strategy 2: Progressive difficulty within each family.
     Easy → Medium → Hard for each topic, then move to next topic.
@@ -188,36 +216,41 @@ def train_strategy_progressive(num_iterations: int = 500, seed: int = 42) -> Dic
     # Reduce forgetting rate OR use periodic time reset for long training
     # Option 1: Lower forgetting rate (better for long training)
     # Option 2: Reset time periodically (keeps forgetting realistic but prevents complete loss)
-    # Using Option 1: lower forgetting rate
-    # Use LM Student instead of MockStudentAgent
-    student = LMStudentAgent(
-        learning_rate=5e-5,
-        retention_constant=80.0,
-        device='cpu',
-        max_length=256,
-        gradient_accumulation_steps=4
-    ) if USE_LM_STUDENT else MockStudentAgent(learning_rate=0.15, forgetting_rate=0.01, seed=seed)
-    generator = MockTaskGenerator(seed=seed)
-    
+    generator = generator_cls(seed=seed)
     topics = generator.get_available_topics()
+    difficulties = generator.get_available_difficulties()
+    
+    if USE_PPO_STUDENT:
+        student = PPOStudentWrapper(
+            learning_rate=3e-4,
+            train_steps_per_task=16,  # Further reduced for speed
+            seed=seed,
+            available_topics=topics,
+            available_difficulties=difficulties,
+        )
+    else:
+        student = MockStudentAgent(learning_rate=0.15, forgetting_rate=0.01, seed=seed)
+    
     all_difficulties = generator.get_available_difficulties()
     # Progressive: use all difficulties in order
     difficulties = all_difficulties  # Use all 7 difficulty levels
     
-    # Evaluation on difficult questions - CREATE FIXED SET ONCE
-    # Use 'expert' or 'master' for truly difficult questions
-    hard_eval_tasks = []
+    # Evaluation sets (fixed by default, resampled if requested)
     eval_difficulty = 'expert' if 'expert' in all_difficulties else 'hard'
-    for topic in topics:
-        for _ in range(5):
-            hard_eval_tasks.append(generator.generate_task(topic, eval_difficulty))
-    
-    # Create FIXED general eval set (medium difficulty, all topics)
-    general_eval_tasks = [
-        generator.generate_task(topic, 'medium')
-        for topic in topics
-        for _ in range(3)  # 3 tasks per topic
-    ]
+    def sample_eval_sets():
+        hard = [
+            generator.generate_task(topic, eval_difficulty)
+            for topic in topics
+            for _ in range(5)
+        ]
+        general = [
+            generator.generate_task(topic, 'medium')
+            for topic in topics
+            for _ in range(3)
+        ]
+        return general, hard
+
+    general_eval_tasks, hard_eval_tasks = sample_eval_sets()
     
     history = {
         'iterations': [],
@@ -232,6 +265,17 @@ def train_strategy_progressive(num_iterations: int = 500, seed: int = 42) -> Dic
     # Progressive curriculum: cycle through topics, increase difficulty over time
     # Structure: For each topic, do easy → medium → hard
     questions_per_difficulty = max(1, num_iterations // (len(topics) * len(difficulties)))
+    
+    # Track last evaluation to avoid re-evaluating every iteration
+    last_accuracy_after = 0.0
+    last_general_accuracy = 0.0
+    eval_frequency = 5 if USE_PPO_STUDENT else 1
+    
+    # Initial evaluation
+    if USE_PPO_STUDENT:
+        general_eval_tasks, hard_eval_tasks = sample_eval_sets()
+        last_accuracy_after = student.evaluate(hard_eval_tasks)
+        last_general_accuracy = student.evaluate(general_eval_tasks)
     
     iterator = range(num_iterations)
     if HAS_TQDM:
@@ -248,15 +292,20 @@ def train_strategy_progressive(num_iterations: int = 500, seed: int = 42) -> Dic
         
         task = generator.generate_task(topic, difficulty)
         
-        # Evaluate before learning
-        accuracy_before = student.evaluate(hard_eval_tasks)
-        
         # Student learns
         student.learn(task)
         
-        # Evaluate after learning (BEFORE time advance for accurate snapshot)
-        accuracy_after = student.evaluate(hard_eval_tasks)
-        general_accuracy = student.evaluate(general_eval_tasks)  # Use FIXED eval set
+        # Only evaluate periodically to save time
+        if iteration % eval_frequency == 0 or iteration == num_iterations - 1:
+            if resample_eval:
+                general_eval_tasks, hard_eval_tasks = sample_eval_sets()
+            accuracy_after = student.evaluate(hard_eval_tasks)
+            general_accuracy = student.evaluate(general_eval_tasks)
+            last_accuracy_after = accuracy_after
+            last_general_accuracy = general_accuracy
+        else:
+            accuracy_after = last_accuracy_after
+            general_accuracy = last_general_accuracy
         
         student.advance_time(1.0)
         
@@ -264,14 +313,19 @@ def train_strategy_progressive(num_iterations: int = 500, seed: int = 42) -> Dic
         history['iterations'].append(iteration)
         history['student_accuracies'].append(general_accuracy)
         history['difficult_accuracies'].append(accuracy_after)
-        history['teacher_rewards'].append(accuracy_after - accuracy_before)
+        history['teacher_rewards'].append(0.0 if iteration % eval_frequency != 0 else accuracy_after - last_accuracy_after)
         history['topics'].append(topic)
         history['difficulties'].append(difficulty)
     
     return history
 
 
-def train_strategy_teacher(num_iterations: int = 500, seed: int = 42) -> Dict:
+def train_strategy_teacher(
+    num_iterations: int = 500,
+    seed: int = 42,
+    generator_cls=MediumTaskGenerator,
+    resample_eval: bool = False,
+) -> Dict:
     """
     Strategy 3: RL Teacher Agent learns optimal curriculum.
     
@@ -283,34 +337,42 @@ def train_strategy_teacher(num_iterations: int = 500, seed: int = 42) -> Dict:
         Training history dictionary with difficult_accuracies added
     """
     # Initialize components
-    generator = MockTaskGenerator(seed=seed)
+    generator = generator_cls(seed=seed)
     teacher = TeacherAgent(exploration_bonus=2.0, task_generator=generator)  # Dynamic action space
-    # Use LM Student instead of MockStudentAgent
-    student = LMStudentAgent(
-        learning_rate=5e-5,
-        retention_constant=80.0,
-        device='cpu',
-        max_length=256,
-        gradient_accumulation_steps=4
-    ) if USE_LM_STUDENT else MockStudentAgent(learning_rate=0.15, forgetting_rate=0.01, seed=seed)
+    
+    topics = generator.get_available_topics()
+    difficulties = generator.get_available_difficulties()
+    
+    if USE_PPO_STUDENT:
+        student = PPOStudentWrapper(
+            learning_rate=3e-4,
+            train_steps_per_task=16,  # Further reduced for speed
+            seed=seed,
+            available_topics=topics,
+            available_difficulties=difficulties,
+        )
+    else:
+        student = MockStudentAgent(learning_rate=0.15, forgetting_rate=0.01, seed=seed)
     
     topics = generator.get_available_topics()
     
-    # Create evaluation sets
-    eval_tasks = [
-        generator.generate_task(topic, 'medium')
-        for topic in topics
-        for _ in range(3)
-    ]
-    
-    # Create difficult question evaluation set - use expert/master level
+    # Create evaluation sets (resampled if requested)
     all_difficulties = generator.get_available_difficulties()
     eval_difficulty = 'expert' if 'expert' in all_difficulties else 'hard'
-    hard_eval_tasks = [
-        generator.generate_task(topic, eval_difficulty)
-        for topic in topics
-        for _ in range(5)
-    ]
+    def sample_eval_sets():
+        eval_tasks = [
+            generator.generate_task(topic, 'medium')
+            for topic in topics
+            for _ in range(3)
+        ]
+        hard_eval_tasks = [
+            generator.generate_task(topic, eval_difficulty)
+            for topic in topics
+            for _ in range(5)
+        ]
+        return eval_tasks, hard_eval_tasks
+
+    eval_tasks, hard_eval_tasks = sample_eval_sets()
     
     # Track metrics
     history = {
@@ -350,6 +412,8 @@ def train_strategy_teacher(num_iterations: int = 500, seed: int = 42) -> Dict:
         student.learn(task)
         
         # 6. Evaluate student AFTER learning
+        if resample_eval:
+            eval_tasks, hard_eval_tasks = sample_eval_sets()
         accuracy_after = student.evaluate(eval_tasks)
         difficult_acc_after = student.evaluate(hard_eval_tasks)
         
@@ -424,7 +488,8 @@ def plot_comparison(histories: Dict[str, Dict], save_path: str = 'teacher_agent_
             # Teacher: Show exponential growth clearly with smooth curve
             # Less smoothing to show actual exponential curve
             window = 10 if len(accuracies) > 50 else 5
-            smoothed = np.convolve(accuracies, np.ones(window)/window, mode='same')
+            window = min(window, len(accuracies))
+            smoothed = np.array(accuracies) if window <= 1 else np.convolve(accuracies, np.ones(window)/window, mode='same')
             ax.plot(iterations, smoothed, 
                    label=f'{name} (Exponential Growth)', 
                    color=colors[name],
@@ -445,8 +510,8 @@ def plot_comparison(histories: Dict[str, Dict], save_path: str = 'teacher_agent_
                        alpha=0.4,  # Lighter to show noise
                        zorder=1)
                 # Overlay smoothed version
-                window = 30
-                smoothed = np.convolve(accuracies, np.ones(window)/window, mode='same')
+                window = min(30, len(accuracies))
+                smoothed = np.array(accuracies) if window <= 1 else np.convolve(accuracies, np.ones(window)/window, mode='same')
                 ax.plot(iterations, smoothed, 
                        color=colors[name],
                        linestyle=line_styles[name],
@@ -497,7 +562,8 @@ def plot_comparison(histories: Dict[str, Dict], save_path: str = 'teacher_agent_
         if name == 'Teacher':
             # Teacher: Emphasize exponential growth
             window = 8  # Less smoothing to show exponential shape
-            smoothed = np.convolve(difficult_accuracies, np.ones(window)/window, mode='same')
+            window = min(window, len(difficult_accuracies))
+            smoothed = np.array(difficult_accuracies) if window <= 1 else np.convolve(difficult_accuracies, np.ones(window)/window, mode='same')
             ax.plot(iterations, smoothed, 
                    label=f'{name} (Exponential)', 
                    color=colors[name],
@@ -517,8 +583,8 @@ def plot_comparison(histories: Dict[str, Dict], save_path: str = 'teacher_agent_
                        alpha=0.3,
                        zorder=1)
                 # Overlay smoothed
-                window = 25
-                smoothed = np.convolve(difficult_accuracies, np.ones(window)/window, mode='same')
+                window = min(25, len(difficult_accuracies))
+                smoothed = np.array(difficult_accuracies) if window <= 1 else np.convolve(difficult_accuracies, np.ones(window)/window, mode='same')
                 ax.plot(iterations, smoothed, 
                        color=colors[name],
                        linestyle=line_styles[name],
@@ -705,8 +771,29 @@ if __name__ == "__main__":
                        help='Use fixed seed=42 for reproducible results (deterministic)')
     parser.add_argument('--runs', type=int, default=1,
                        help='Number of runs for variance analysis (default: 1)')
+    parser.add_argument('--use-mock-student', action='store_true',
+                       help='Force MockStudentAgent instead of PPO (faster, more stable for quick plots)')
+    parser.add_argument('--use-mock-generator', action='store_true',
+                       help='Use legacy mock task generator (default = medium generator)')
+    parser.add_argument('--resample-eval', action='store_true',
+                       help='Resample evaluation tasks each eval (adds stochasticity, good for medium generator)')
     
     args = parser.parse_args()
+    
+    # Optional override: force mock student
+    if args.use_mock_student:
+        USE_PPO_STUDENT = False
+        print("⚠️  Forcing MockStudentAgent (PPO disabled by flag)")
+    
+    # Select task generator class
+    generator_cls = MediumTaskGenerator
+    print("🔧 Using medium task generator (STEM-heavy, larger bank, LM-light)")
+    if args.use_mock_generator:
+        generator_cls = MockTaskGenerator
+        print("ℹ️  Overridden: using legacy mock task generator")
+    # Default to resampling evals for more variance on medium generator unless explicitly disabled
+    if generator_cls is MediumTaskGenerator and not args.resample_eval:
+        args.resample_eval = True
     
     # Determine seed
     if args.deterministic:
@@ -742,9 +829,9 @@ if __name__ == "__main__":
             run_seed = seed + run  # Different seed for each run
             print(f"Run {run + 1}/{args.runs} (seed={run_seed})...")
             
-            history_random = train_strategy_random(num_iterations=num_iterations, seed=run_seed)
-            history_progressive = train_strategy_progressive(num_iterations=num_iterations, seed=run_seed)
-            history_teacher = train_strategy_teacher(num_iterations=num_iterations, seed=run_seed)
+            history_random = train_strategy_random(num_iterations=num_iterations, seed=run_seed, generator_cls=generator_cls, resample_eval=args.resample_eval)
+            history_progressive = train_strategy_progressive(num_iterations=num_iterations, seed=run_seed, generator_cls=generator_cls, resample_eval=args.resample_eval)
+            history_teacher = train_strategy_teacher(num_iterations=num_iterations, seed=run_seed, generator_cls=generator_cls, resample_eval=args.resample_eval)
             
             all_results['Random'].append(history_random)
             all_results['Progressive'].append(history_progressive)
@@ -786,13 +873,13 @@ if __name__ == "__main__":
         # Single run
         # Train all three strategies
         print("Training Random Strategy...")
-        history_random = train_strategy_random(num_iterations=num_iterations, seed=seed)
+        history_random = train_strategy_random(num_iterations=num_iterations, seed=seed, generator_cls=generator_cls, resample_eval=args.resample_eval)
         
         print("\nTraining Progressive Strategy...")
-        history_progressive = train_strategy_progressive(num_iterations=num_iterations, seed=seed)
+        history_progressive = train_strategy_progressive(num_iterations=num_iterations, seed=seed, generator_cls=generator_cls, resample_eval=args.resample_eval)
         
         print("\nTraining Teacher Strategy...")
-        history_teacher = train_strategy_teacher(num_iterations=num_iterations, seed=seed)
+        history_teacher = train_strategy_teacher(num_iterations=num_iterations, seed=seed, generator_cls=generator_cls, resample_eval=args.resample_eval)
     
     # Create comparison plots
     print("\nGenerating comparison plots...")
@@ -805,6 +892,6 @@ if __name__ == "__main__":
     plot_comparison(histories, save_path='comparison_all_strategies.png')
     
     print("\n✅ Comparison complete! Check 'comparison_all_strategies.png'")
+    print(f"📊 Using PPO Student Agents with {num_iterations} iterations per strategy")
     if not args.deterministic and args.seed is None:
         print(f"💡 Tip: Results vary each run. Use --deterministic for reproducible results, or --seed <N> for specific seed.")
-

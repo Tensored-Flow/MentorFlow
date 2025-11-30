@@ -8,6 +8,7 @@ import shutil
 from pathlib import Path
 import os
 
+# HF-only export; not used for local/prod deploys.
 HF_SPACE_DIR = Path("hf_space_deploy")
 REQUIRED_DIRS = [
     "teacher_agent_dev",
@@ -95,4 +96,3 @@ def prepare_deployment():
 
 if __name__ == "__main__":
     prepare_deployment()
-

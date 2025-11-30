@@ -5,7 +5,7 @@ from typing import Dict, Tuple
 from interfaces import Task
 
 from mock_student import MockStudentAgent
-from mock_task_generator import MockTaskGenerator
+from medium_task_generator import MediumTaskGenerator
 from teacher_agent import TeacherAgent, compute_reward
 
 
@@ -22,7 +22,7 @@ def train_teacher(num_iterations: int = 500, verbose: bool = True, seed: int = 4
         Tuple of (history dict, teacher agent, student agent)
     """
     # Initialize components
-    generator = MockTaskGenerator(seed=seed)
+    generator = MediumTaskGenerator(seed=seed)
     teacher = TeacherAgent(exploration_bonus=2.0, task_generator=generator)  # Pass generator for dynamic action space
     student = MockStudentAgent(learning_rate=0.15, forgetting_rate=0.01, seed=seed)  # Reduced forgetting rate
     
@@ -241,4 +241,3 @@ if __name__ == "__main__":
     print(f"\nTeacher Statistics:")
     print(f"  Total actions tried: {stats['total_pulls']}")
     print(f"  Unique actions: {np.sum(stats['action_counts'] > 0)}/{stats['total_pulls']}")
-

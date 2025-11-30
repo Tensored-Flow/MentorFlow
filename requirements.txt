@@ -1,13 +1,20 @@
-# TeachRL Dependencies
+# TeachRL Dependencies (backend + training + demos)
+
 # Core
-numpy>=1.21.0
+numpy>=1.24.0
 gymnasium>=0.28.0
 
 # Reinforcement Learning
 stable-baselines3>=2.0.0
+torch>=2.0.0  # required by stable-baselines3
 
-# Visualization
+# Visualization / plots
 matplotlib>=3.5.0
+seaborn>=0.12.0
 
-# Optional: Progress bars
-tqdm>=4.60.0
+# App / API
+flask>=2.3.0
+gradio>=5.0.0
+
+# Optional: Progress bars / utils
+tqdm>=4.65.0
