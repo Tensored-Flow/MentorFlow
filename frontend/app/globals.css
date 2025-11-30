@@ -3,8 +3,36 @@
 @tailwind utilities;
 
 :root {
-  --background: #0a0a0a;
-  --foreground: #ffffff;
+  --background-dark: #04030a;
+  --foreground-dark: #f5f5fb;
+  --accent-primary-dark: #a855f7;
+  --accent-secondary-dark: #3b82f6;
+  --glass-bg-dark: rgba(255, 255, 255, 0.05);
+  --glass-border-dark: rgba(255, 255, 255, 0.1);
+
+  --background-light: #fdfdfd;
+  --foreground-light: #050505;
+  --accent-primary-light: #1e1f2b;
+  --accent-secondary-light: #5d5d7a;
+  --glass-bg-light: rgba(255, 255, 255, 0.85);
+  --glass-border-light: rgba(0, 0, 0, 0.05);
+
+  --background: var(--background-dark);
+  --foreground: var(--foreground-dark);
+  --accent-primary: var(--accent-primary-dark);
+  --accent-secondary: var(--accent-secondary-dark);
+  --glass-bg: var(--glass-bg-dark);
+  --glass-border: var(--glass-border-dark);
+}
+
+/* Light complement theme */
+[data-theme="light"] {
+  --background: var(--background-light);
+  --foreground: var(--foreground-light);
+  --accent-primary: var(--accent-primary-light);
+  --accent-secondary: var(--accent-secondary-light);
+  --glass-bg: var(--glass-bg-light);
+  --glass-border: var(--glass-border-light);
 }
 
 html {
@@ -18,9 +46,22 @@ body {
     Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
 }
 
+[data-theme="mono"] body {
+  background: #070707;
+  color: #f7f7f7;
+}
+
 /* Gradient text utility */
 .gradient-text {
-  background: linear-gradient(to right, #a855f7, #3b82f6);
+  background: linear-gradient(to right, var(--accent-primary), var(--accent-secondary));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Monochrome gradient override */
+[data-theme="mono"] .gradient-text {
+  background: linear-gradient(to right, #ffffff, #cccccc);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -28,9 +69,68 @@ body {
 
 /* Glass effect */
 .glass {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--glass-bg);
   backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--glass-border);
+}
+
+/* Monochrome button overrides */
+[data-theme="mono"] .bg-gradient-to-r {
+  background: linear-gradient(to right, #333333, #555555) !important;
+}
+
+[data-theme="mono"] .from-purple-500,
+[data-theme="mono"] .from-purple-600,
+[data-theme="mono"] .to-purple-500,
+[data-theme="mono"] .to-purple-600 {
+  --tw-gradient-from: #444444 !important;
+  --tw-gradient-to: #666666 !important;
+}
+
+[data-theme="mono"] .text-purple-400,
+[data-theme="mono"] .text-purple-500 {
+  color: #cccccc !important;
+}
+
+[data-theme="mono"] .text-blue-400,
+[data-theme="mono"] .text-blue-500 {
+  color: #aaaaaa !important;
+}
+
+[data-theme="mono"] .text-green-400 {
+  color: #ffffff !important;
+}
+
+[data-theme="mono"] .bg-green-500 {
+  background-color: #ffffff !important;
+}
+
+[data-theme="mono"] .bg-red-500 {
+  background-color: #666666 !important;
+}
+
+[data-theme="mono"] .glass {
+  box-shadow: 0 30px 60px rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="mono"] .card-variant,
+[data-theme="mono"] .gradient-card {
+  background: #111111 !important;
+  border-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+[data-theme="mono"] .bg-gradient-to-r,
+[data-theme="mono"] .bg-gradient-to-br {
+  background: #222222 !important;
+}
+
+[data-theme="mono"] .bg-gradient-to-l {
+  background: #252525 !important;
+}
+
+[data-theme="mono"] .shadow-purple,
+[data-theme="mono"] .shadow-blue {
+  box-shadow: none !important;
 }
 
 /* Smooth animations */

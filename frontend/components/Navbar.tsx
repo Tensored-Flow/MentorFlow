@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { usePathname } from "next/navigation";
 import { Menu, X } from "lucide-react";
 
 export default function Navbar() {
   const [isOpen, setIsOpen] = useState(false);
+  const pathname = usePathname();
 
   const links = [
     { href: "/", label: "Home" },
@@ -13,6 +15,11 @@ export default function Navbar() {
     { href: "/training", label: "Training" },
     { href: "/login", label: "Login" },
   ];
+
+  const isActive = (href: string) => {
+    if (href === "/") return pathname === "/";
+    return pathname?.startsWith(href);
+  };
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 glass">
@@ -29,7 +36,9 @@ export default function Navbar() {
               <Link
                 key={link.href}
                 href={link.href}
-                className="text-gray-300 hover:text-white transition-colors duration-200"
+                className={`text-gray-300 hover:text-white transition-colors duration-200 ${
+                  isActive(link.href) ? "text-white" : ""
+                }`}
               >
                 {link.label}
               </Link>
@@ -58,7 +67,9 @@ export default function Navbar() {
               <Link
                 key={link.href}
                 href={link.href}
-                className="block text-gray-300 hover:text-white transition-colors"
+                className={`block text-gray-300 hover:text-white transition-colors ${
+                  isActive(link.href) ? "text-white" : ""
+                }`}
                 onClick={() => setIsOpen(false)}
               >
                 {link.label}
