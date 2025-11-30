@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { TrendingUp, Activity, Sparkles, RefreshCcw } from "lucide-react";
+import SkillDifficultyBar from "@/components/SkillDifficultyBar";
 import {
   startTraining,
   stopTraining,
@@ -42,6 +43,7 @@ type ProgressResponse = {
 };
 
 const POLL_INTERVAL = 300;
+const NUM_DIFFICULTIES = 5;
 
 const buildPath = (values: number[], width: number, height: number) => {
   if (!values.length) return "";
@@ -128,6 +130,13 @@ export default function TrainingPage() {
 
   const metadata = statusData?.teacher.metadata ?? { step: 0, total_steps: 1, running: false };
   const progressValue = Math.min(100, (metadata.step / Math.max(metadata.total_steps, 1)) * 100);
+
+  const currentDifficultyLevel = useMemo(() => {
+    const arms = statusData?.teacher.selected_arms ?? [];
+    if (!arms.length) return 1;
+    const lastArm = arms[arms.length - 1];
+    return (lastArm % NUM_DIFFICULTIES) + 1;
+  }, [statusData]);
 
   const accuracies = statusData?.teacher.accuracies ?? [];
   const rewards = statusData?.teacher.rewards ?? [];
@@ -248,6 +257,8 @@ export default function TrainingPage() {
                 </div>
               </div>
             </div>
+
+            <SkillDifficultyBar level={currentDifficultyLevel} compact />
 
             <div className="glass rounded-3xl border border-white/10 p-5 space-y-3">
               <p className="text-sm uppercase tracking-[0.3em] text-white/50">Task Family Distribution</p>

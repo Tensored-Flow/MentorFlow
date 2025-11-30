@@ -35,10 +35,11 @@ def compute_accuracy_by_type(
         Dict mapping task type name to accuracy
     """
     # Group by type
-    type_results: Dict[int, List[bool]] = {i: [] for i in range(15)}
+    num_arms = NUM_FAMILIES * NUM_DIFFICULTIES
+    type_results: Dict[int, List[bool]] = {i: [] for i in range(num_arms)}
     
     for task, pred in zip(eval_tasks, predictions):
-        arm_id = task.family_id * NUM_DIFFICULTIES + task.difficulty_id
+        arm_id = task.family_id * NUM_DIFFICULTIES + (task.difficulty_id - 1)
         correct = (pred == task.correct_action)
         type_results[arm_id].append(correct)
     
@@ -79,7 +80,8 @@ def compute_accuracy_by_difficulty(
     
     for task, pred in zip(eval_tasks, predictions):
         correct = (pred == task.correct_action)
-        diff_results[task.difficulty_id].append(correct)
+        diff_idx = max(0, int(task.difficulty_id) - 1)
+        diff_results[diff_idx].append(correct)
     
     return {
         DIFFICULTY_NAMES[did]: sum(r) / len(r) if r else 0.0
@@ -118,7 +120,7 @@ def compute_curriculum_entropy(selection_history: List[int]) -> float:
     if not selection_history:
         return 0.0
     
-    counts = np.zeros(15)
+    counts = np.zeros(NUM_FAMILIES * NUM_DIFFICULTIES)
     for arm in selection_history:
         counts[arm] += 1
     
@@ -141,7 +143,7 @@ def compute_curriculum_progression(
     if not selection_history:
         return []
     
-    difficulties = [arm % NUM_DIFFICULTIES for arm in selection_history]
+    difficulties = [(arm % NUM_DIFFICULTIES) + 1 for arm in selection_history]
     progression = []
     
     for i in range(len(difficulties)):

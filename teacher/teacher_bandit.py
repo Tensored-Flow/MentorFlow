@@ -1,7 +1,7 @@
 """
 Teacher Bandit for TeachRL
 Multi-armed bandit that selects which task type the student should train on.
-15 arms = 5 families × 3 difficulties
+90 arms = 18 families × 5 difficulties
 """
 
 import numpy as np
@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from tasks.task_generator import NUM_FAMILIES, NUM_DIFFICULTIES, arm_to_name
 
 
-NUM_ARMS = NUM_FAMILIES * NUM_DIFFICULTIES  # 15
+NUM_ARMS = NUM_FAMILIES * NUM_DIFFICULTIES
 
 
 class BanditStrategy(Enum):

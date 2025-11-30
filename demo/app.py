@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, session
 from flask_cors import CORS
 import os
 import numpy as np
@@ -15,6 +15,7 @@ import json
 import threading
 import time
 import random
+from typing import Any, Dict
 
 from tasks.task_generator import (
     generate_task, generate_task_by_arm, generate_eval_dataset,
@@ -31,7 +32,9 @@ from student.ppo_agent import StudentAgent
 from teacher.teacher_bandit import BanditStrategy
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for frontend
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "mentorflow-dev-secret")
+# Allow frontend to send cookies for session-based difficulty control
+CORS(app, supports_credentials=True)
 
 # Mapping from UI subjects to generator family ids
 SUBJECT_FAMILY_MAP = {
@@ -62,6 +65,46 @@ training_state = {
 
 CACHE_DIR = (Path(__file__).parent / "cache").resolve()
 CACHE_PATH = CACHE_DIR / "last_run.json"
+
+
+def _get_difficulty_state() -> Dict[str, Any]:
+    state = session.get("difficulty_state") or {}
+    history = state.get("history", [])
+    state.setdefault("current_level", 1)
+    state["history"] = history[-20:]
+    if history:
+        rolling = sum(history) / len(history)
+    else:
+        rolling = 0.0
+    state["rolling_accuracy"] = round(rolling, 3)
+    session["difficulty_state"] = state
+    session.modified = True
+    return state
+
+
+def _update_difficulty_state(correct: bool) -> Dict[str, Any]:
+    state = _get_difficulty_state()
+    history = state.get("history", [])
+    history.append(bool(correct))
+    history = history[-20:]
+    rolling = sum(history) / len(history)
+
+    level = state.get("current_level", 1)
+    if rolling > 0.8 and level < NUM_DIFFICULTIES:
+        level += 1
+    elif rolling < 0.4 and level > 1:
+        level -= 1
+
+    state.update(
+        {
+            "history": history,
+            "rolling_accuracy": round(rolling, 3),
+            "current_level": level,
+        }
+    )
+    session["difficulty_state"] = state
+    session.modified = True
+    return state
 
 
 def _build_training_response(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -126,15 +169,17 @@ def _to_list(value: Any) -> Any:
 
 def _serialize_task(task, arm_id: int, *, subject_label: str | None = None) -> Dict[str, Any]:
     family_id = arm_id // NUM_DIFFICULTIES
-    difficulty_id = arm_id % NUM_DIFFICULTIES
+    difficulty_id = task.difficulty_id if hasattr(task, "difficulty_id") else (arm_id % NUM_DIFFICULTIES) + 1
+    difficulty_idx = max(0, int(difficulty_id) - 1)
     explanation = (
         f"The correct answer is {task.human_choices[task.correct_action]} "
-        f"because it matches the adaptation the teacher expected at difficulty {DIFFICULTY_NAMES[difficulty_id]}."
+        f"because it matches the adaptation the teacher expected at difficulty {DIFFICULTY_NAMES[difficulty_idx]}."
     )
     return {
         "subject": subject_label or FAMILY_NAMES[family_id],
         "family": FAMILY_NAMES[family_id],
-        "difficulty": DIFFICULTY_NAMES[difficulty_id],
+        "difficulty": DIFFICULTY_NAMES[difficulty_idx],
+        "difficulty_level": int(difficulty_id),
         "arm_id": arm_id,
         "prompt": task.human_prompt,
         "choices": task.human_choices,
@@ -152,15 +197,16 @@ def index():
 def get_random_task():
     """Get a random task for demo."""
     family_id = np.random.randint(0, NUM_FAMILIES)
-    difficulty_id = np.random.randint(0, NUM_DIFFICULTIES)
+    difficulty_idx = np.random.randint(0, NUM_DIFFICULTIES)
     seed = np.random.randint(0, 10000)
     
-    task = generate_task(family_id, difficulty_id, seed)
+    task = generate_task(family_id, difficulty_idx + 1, seed)
     
     return jsonify({
-        "arm_id": family_id * NUM_DIFFICULTIES + difficulty_id,
+        "arm_id": family_id * NUM_DIFFICULTIES + difficulty_idx,
         "family": FAMILY_NAMES[family_id],
-        "difficulty": DIFFICULTY_NAMES[difficulty_id],
+        "difficulty": DIFFICULTY_NAMES[difficulty_idx],
+        "difficulty_level": int(difficulty_idx + 1),
         "prompt": task.human_prompt,
         "choices": task.human_choices,
         "correct_action": task.correct_action,
@@ -184,12 +230,12 @@ def get_tasks_by_subject():
 
     difficulty_name = (request.args.get('difficulty') or '').lower()
     if difficulty_name in DIFFICULTY_NAMES:
-        difficulty_id = DIFFICULTY_NAMES.index(difficulty_name)
+        difficulty_idx = DIFFICULTY_NAMES.index(difficulty_name)
     else:
-        difficulty_id = np.random.randint(0, NUM_DIFFICULTIES)
+        difficulty_idx = np.random.randint(0, NUM_DIFFICULTIES)
 
     family_id = int(np.random.choice(families))
-    arm_id = family_id * NUM_DIFFICULTIES + difficulty_id
+    arm_id = family_id * NUM_DIFFICULTIES + difficulty_idx
     task = generate_task_by_arm(arm_id, seed=np.random.randint(0, 10000))
     return jsonify(_serialize_task(task, arm_id, subject_label=subject))
 
@@ -200,12 +246,13 @@ def get_task_by_arm(arm_id):
     seed = np.random.randint(0, 10000)
     task = generate_task_by_arm(arm_id, seed)
     family_id = arm_id // NUM_DIFFICULTIES
-    difficulty_id = arm_id % NUM_DIFFICULTIES
+    difficulty_idx = arm_id % NUM_DIFFICULTIES
     
     return jsonify({
         "arm_id": arm_id,
         "family": FAMILY_NAMES[family_id],
-        "difficulty": DIFFICULTY_NAMES[difficulty_id],
+        "difficulty": DIFFICULTY_NAMES[difficulty_idx],
+        "difficulty_level": int(difficulty_idx + 1),
         "prompt": task.human_prompt,
         "choices": task.human_choices,
         "correct_action": task.correct_action,
@@ -229,6 +276,56 @@ def check_answer():
             correct=correct,
         )
     return jsonify({"correct": correct})
+
+
+@app.route('/api/task/next')
+def get_next_task():
+    """Serve the next task using the adaptive difficulty controller."""
+    state = _get_difficulty_state()
+    level = state.get("current_level", 1)
+    subject = (request.args.get("subject") or "").lower()
+    family_param = request.args.get("family_id")
+
+    if family_param is not None:
+        try:
+            family_id = int(family_param)
+        except ValueError:
+            return jsonify({"error": "Invalid family_id"}), 400
+    else:
+        families = SUBJECT_FAMILY_MAP.get(subject) or list(range(NUM_FAMILIES))
+        family_id = int(np.random.choice(families))
+
+    seed = np.random.randint(0, 10000)
+    task = generate_task(family_id, level, seed)
+    arm_id = family_id * NUM_DIFFICULTIES + (level - 1)
+    return jsonify({
+        "arm_id": int(arm_id),
+        "family_id": family_id,
+        "family": FAMILY_NAMES[family_id],
+        "difficulty_level": level,
+        "difficulty_label": DIFFICULTY_NAMES[level - 1],
+        "rolling_accuracy": state.get("rolling_accuracy", 0.0),
+        "history": state.get("history", []),
+        "prompt": task.human_prompt,
+        "choices": task.human_choices,
+        "answer_index": int(task.correct_action),
+        "topic": FAMILY_NAMES[family_id],
+    })
+
+
+@app.route('/api/user/attempt', methods=['POST'])
+def record_user_attempt():
+    """Record a user attempt and update difficulty."""
+    data = request.json or {}
+    correct = bool(data.get("correct"))
+    prev_state = _get_difficulty_state()
+    updated = _update_difficulty_state(correct)
+    return jsonify({
+        "status": "ok",
+        "previous_level": prev_state.get("current_level", 1),
+        "difficulty_state": updated,
+        "level_changed": prev_state.get("current_level", 1) != updated.get("current_level", 1),
+    })
 
 
 @app.route('/api/profile')
