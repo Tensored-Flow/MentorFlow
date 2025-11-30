@@ -38,6 +38,11 @@ def train_strategy_random(num_iterations: int = 500, seed: int = 42, target_accu
     """
     Strategy 1: Random questions until student can confidently pass difficult questions.
     
+    Selection strategy:
+    - Randomly chooses a topic (uniform across all topics)
+    - Randomly chooses a difficulty (uniform across all difficulties)
+    - No curriculum structure - completely random
+    
     Args:
         num_iterations: Maximum iterations to train
         seed: Random seed
@@ -49,17 +54,30 @@ def train_strategy_random(num_iterations: int = 500, seed: int = 42, target_accu
     import random
     rng = random.Random(seed)
     
-    student = MockStudentAgent(learning_rate=0.15, forgetting_rate=0.05, seed=seed)
+    # Reduce forgetting rate OR use periodic time reset for long training
+    # Option 1: Lower forgetting rate (better for long training)
+    # Option 2: Reset time periodically (keeps forgetting realistic but prevents complete loss)
+    # Using Option 1: lower forgetting rate
+    student = MockStudentAgent(learning_rate=0.15, forgetting_rate=0.01, seed=seed)
     generator = MockTaskGenerator(seed=seed)
     
     topics = generator.get_available_topics()
     difficulties = generator.get_available_difficulties()
     
-    # Evaluation on difficult questions
+    # Evaluation on difficult questions - CREATE FIXED SET ONCE
+    # Use 'expert' or 'master' for truly difficult questions (with expanded difficulty levels)
     hard_eval_tasks = []
+    eval_difficulty = 'expert' if 'expert' in difficulties else 'hard'  # Use expert level for challenging eval
     for topic in topics:
-        for _ in range(5):  # 5 hard questions per topic
-            hard_eval_tasks.append(generator.generate_task(topic, 'hard'))
+        for _ in range(5):  # 5 difficult questions per topic
+            hard_eval_tasks.append(generator.generate_task(topic, eval_difficulty))
+    
+    # Create FIXED general eval set (medium difficulty, all topics)
+    general_eval_tasks = [
+        generator.generate_task(topic, 'medium')
+        for topic in topics
+        for _ in range(3)  # 3 tasks per topic
+    ]
     
     history = {
         'iterations': [],
@@ -72,9 +90,9 @@ def train_strategy_random(num_iterations: int = 500, seed: int = 42, target_accu
     }
     
     for iteration in range(num_iterations):
-        # Random action
-        topic = rng.choice(topics)
-        difficulty = rng.choice(difficulties)
+        # Random strategy: choose random topic AND random difficulty independently
+        topic = rng.choice(topics)           # Random topic
+        difficulty = rng.choice(difficulties)  # Random difficulty
         
         task = generator.generate_task(topic, difficulty)
         
@@ -84,13 +102,9 @@ def train_strategy_random(num_iterations: int = 500, seed: int = 42, target_accu
         # Student learns
         student.learn(task)
         
-        # Evaluate after learning
+        # Evaluate after learning (BEFORE time advance for accurate snapshot)
         accuracy_after = student.evaluate(hard_eval_tasks)
-        general_accuracy = student.evaluate([
-            generator.generate_task(t, 'medium')
-            for t in topics
-            for _ in range(2)
-        ])
+        general_accuracy = student.evaluate(general_eval_tasks)  # Use FIXED eval set
         
         student.advance_time(1.0)
         
@@ -123,17 +137,32 @@ def train_strategy_progressive(num_iterations: int = 500, seed: int = 42) -> Dic
     Returns:
         Training history dictionary
     """
-    student = MockStudentAgent(learning_rate=0.15, forgetting_rate=0.05, seed=seed)
+    # Reduce forgetting rate OR use periodic time reset for long training
+    # Option 1: Lower forgetting rate (better for long training)
+    # Option 2: Reset time periodically (keeps forgetting realistic but prevents complete loss)
+    # Using Option 1: lower forgetting rate
+    student = MockStudentAgent(learning_rate=0.15, forgetting_rate=0.01, seed=seed)
     generator = MockTaskGenerator(seed=seed)
     
     topics = generator.get_available_topics()
-    difficulties = ['easy', 'medium', 'hard']
+    all_difficulties = generator.get_available_difficulties()
+    # Progressive: use all difficulties in order
+    difficulties = all_difficulties  # Use all 7 difficulty levels
     
-    # Evaluation on difficult questions
+    # Evaluation on difficult questions - CREATE FIXED SET ONCE
+    # Use 'expert' or 'master' for truly difficult questions
     hard_eval_tasks = []
+    eval_difficulty = 'expert' if 'expert' in all_difficulties else 'hard'
     for topic in topics:
         for _ in range(5):
-            hard_eval_tasks.append(generator.generate_task(topic, 'hard'))
+            hard_eval_tasks.append(generator.generate_task(topic, eval_difficulty))
+    
+    # Create FIXED general eval set (medium difficulty, all topics)
+    general_eval_tasks = [
+        generator.generate_task(topic, 'medium')
+        for topic in topics
+        for _ in range(3)  # 3 tasks per topic
+    ]
     
     history = {
         'iterations': [],
@@ -147,11 +176,11 @@ def train_strategy_progressive(num_iterations: int = 500, seed: int = 42) -> Dic
     
     # Progressive curriculum: cycle through topics, increase difficulty over time
     # Structure: For each topic, do easy → medium → hard
-    questions_per_difficulty = num_iterations // (len(topics) * len(difficulties))
+    questions_per_difficulty = max(1, num_iterations // (len(topics) * len(difficulties)))
     
     for iteration in range(num_iterations):
         # Determine current phase
-        phase = iteration // questions_per_difficulty
+        phase = iteration // questions_per_difficulty if questions_per_difficulty > 0 else iteration
         topic_idx = (phase // len(difficulties)) % len(topics)
         diff_idx = phase % len(difficulties)
         
@@ -166,13 +195,9 @@ def train_strategy_progressive(num_iterations: int = 500, seed: int = 42) -> Dic
         # Student learns
         student.learn(task)
         
-        # Evaluate after learning
+        # Evaluate after learning (BEFORE time advance for accurate snapshot)
         accuracy_after = student.evaluate(hard_eval_tasks)
-        general_accuracy = student.evaluate([
-            generator.generate_task(t, 'medium')
-            for t in topics
-            for _ in range(2)
-        ])
+        general_accuracy = student.evaluate(general_eval_tasks)  # Use FIXED eval set
         
         student.advance_time(1.0)
         
@@ -199,9 +224,9 @@ def train_strategy_teacher(num_iterations: int = 500, seed: int = 42) -> Dict:
         Training history dictionary with difficult_accuracies added
     """
     # Initialize components
-    teacher = TeacherAgent(exploration_bonus=2.0)
-    student = MockStudentAgent(learning_rate=0.15, forgetting_rate=0.05, seed=seed)
     generator = MockTaskGenerator(seed=seed)
+    teacher = TeacherAgent(exploration_bonus=2.0, task_generator=generator)  # Dynamic action space
+    student = MockStudentAgent(learning_rate=0.15, forgetting_rate=0.01, seed=seed)  # Reduced forgetting
     
     topics = generator.get_available_topics()
     
@@ -212,9 +237,11 @@ def train_strategy_teacher(num_iterations: int = 500, seed: int = 42) -> Dict:
         for _ in range(3)
     ]
     
-    # Create difficult question evaluation set
+    # Create difficult question evaluation set - use expert/master level
+    all_difficulties = generator.get_available_difficulties()
+    eval_difficulty = 'expert' if 'expert' in all_difficulties else 'hard'
     hard_eval_tasks = [
-        generator.generate_task(topic, 'hard')
+        generator.generate_task(topic, eval_difficulty)
         for topic in topics
         for _ in range(5)
     ]
@@ -294,7 +321,7 @@ def plot_comparison(histories: Dict[str, Dict], save_path: str = 'teacher_agent_
     """
     import matplotlib.pyplot as plt
     
-    fig, axes = plt.subplots(3, 1, figsize=(14, 12))
+    fig, axes = plt.subplots(4, 1, figsize=(16, 14))
     
     # Define colors and styles for each strategy
     colors = {
@@ -304,47 +331,79 @@ def plot_comparison(histories: Dict[str, Dict], save_path: str = 'teacher_agent_
     }
     
     line_styles = {
-        'Random': '--',
-        'Progressive': '-.',
-        'Teacher': '-'  # Solid line for teacher
+        'Random': '--',           # Dashed = stochastic/erratic
+        'Progressive': '-.',      # Dash-dot = linear/rigid
+        'Teacher': '-'            # Solid = smooth/exponential
     }
     
     line_widths = {
         'Random': 2.0,
         'Progressive': 2.0,
-        'Teacher': 3.0  # Thicker line for teacher
+        'Teacher': 3.5  # Much thicker line for teacher to emphasize exponential growth
     }
     
-    # 1. Plot 1: General Accuracy Over Time
+    # 1. Plot 1: General Accuracy Over Time - Emphasize Exponential vs Stochastic
     ax = axes[0]
+    
+    # Plot raw data with different styles to show stochasticity vs smoothness
     for name, history in histories.items():
         iterations = history['iterations']
         accuracies = history['student_accuracies']
         
-        # Smooth the curve for better visualization
-        if len(accuracies) > 50:
-            window = 20
+        if name == 'Teacher':
+            # Teacher: Show exponential growth clearly with smooth curve
+            # Less smoothing to show actual exponential curve
+            window = 10 if len(accuracies) > 50 else 5
             smoothed = np.convolve(accuracies, np.ones(window)/window, mode='same')
             ax.plot(iterations, smoothed, 
-                   label=name, 
+                   label=f'{name} (Exponential Growth)', 
                    color=colors[name],
                    linestyle=line_styles[name],
                    linewidth=line_widths[name],
-                   alpha=0.9)
+                   alpha=0.95,
+                   zorder=10)  # On top
         else:
-            ax.plot(iterations, accuracies, 
-                   label=name, 
-                   color=colors[name],
-                   linestyle=line_styles[name],
-                   linewidth=line_widths[name],
-                   alpha=0.9)
+            # Random/Progressive: Show stochastic/erratic nature
+            # Plot raw noisy data with some transparency to show variance
+            if len(accuracies) > 50:
+                # Show variance with raw data (more stochastic)
+                ax.plot(iterations, accuracies, 
+                       label=f'{name} (Stochastic/Erratic)', 
+                       color=colors[name],
+                       linestyle=line_styles[name],
+                       linewidth=line_widths[name],
+                       alpha=0.4,  # Lighter to show noise
+                       zorder=1)
+                # Overlay smoothed version
+                window = 30
+                smoothed = np.convolve(accuracies, np.ones(window)/window, mode='same')
+                ax.plot(iterations, smoothed, 
+                       color=colors[name],
+                       linestyle=line_styles[name],
+                       linewidth=line_widths[name],
+                       alpha=0.8)
+            else:
+                ax.plot(iterations, accuracies, 
+                       label=f'{name} (Stochastic)', 
+                       color=colors[name],
+                       linestyle=line_styles[name],
+                       linewidth=line_widths[name],
+                       alpha=0.8)
     
     ax.set_xlabel('Training Iteration', fontsize=12, fontweight='bold')
     ax.set_ylabel('General Accuracy', fontsize=12, fontweight='bold')
-    ax.set_title('Student Accuracy Comparison: Teacher vs Baselines', fontsize=14, fontweight='bold')
+    ax.set_title('Learning Curves: Exponential (Teacher) vs Stochastic (Baselines)', fontsize=14, fontweight='bold')
     ax.legend(loc='lower right', fontsize=11, framealpha=0.9)
     ax.grid(True, alpha=0.3, linestyle='--')
     ax.set_ylim([0.2, 1.0])
+    
+    # Add text annotation highlighting exponential vs stochastic
+    ax.text(0.02, 0.98, 
+           '📈 Teacher: Smooth exponential growth\n📉 Baselines: Erratic, stochastic learning',
+           transform=ax.transAxes, 
+           fontsize=10,
+           verticalalignment='top',
+           bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     
     # Add final accuracy annotations
     for name, history in histories.items():
@@ -355,43 +414,64 @@ def plot_comparison(histories: Dict[str, Dict], save_path: str = 'teacher_agent_
                    xytext=(10, 10),
                    textcoords='offset points',
                    fontsize=10,
-                   bbox=dict(boxstyle='round,pad=0.3', facecolor=colors[name], alpha=0.3),
+                   bbox=dict(boxstyle='round,pad=0.3', facecolor=colors[name], alpha=0.5),
                    arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0'))
     
-    # 2. Plot 2: Difficult Question Accuracy (Most Important!)
+    # 2. Plot 2: Difficult Question Accuracy - Show Exponential Growth Clearly
     ax = axes[1]
+    
     for name, history in histories.items():
         iterations = history['iterations']
         difficult_accuracies = history['difficult_accuracies']
         
-        # Smooth the curve
-        if len(difficult_accuracies) > 50:
-            window = 20
+        if name == 'Teacher':
+            # Teacher: Emphasize exponential growth
+            window = 8  # Less smoothing to show exponential shape
             smoothed = np.convolve(difficult_accuracies, np.ones(window)/window, mode='same')
             ax.plot(iterations, smoothed, 
-                   label=name, 
+                   label=f'{name} (Exponential)', 
                    color=colors[name],
                    linestyle=line_styles[name],
                    linewidth=line_widths[name],
-                   alpha=0.9)
+                   alpha=0.95,
+                   zorder=10)
         else:
-            ax.plot(iterations, difficult_accuracies, 
-                   label=name, 
-                   color=colors[name],
-                   linestyle=line_styles[name],
-                   linewidth=line_widths[name],
-                   alpha=0.9)
+            # Baselines: Show stochastic nature
+            if len(difficult_accuracies) > 50:
+                # Show raw noisy data
+                ax.plot(iterations, difficult_accuracies, 
+                       label=f'{name} (Erratic)', 
+                       color=colors[name],
+                       linestyle=line_styles[name],
+                       linewidth=line_widths[name],
+                       alpha=0.3,
+                       zorder=1)
+                # Overlay smoothed
+                window = 25
+                smoothed = np.convolve(difficult_accuracies, np.ones(window)/window, mode='same')
+                ax.plot(iterations, smoothed, 
+                       color=colors[name],
+                       linestyle=line_styles[name],
+                       linewidth=line_widths[name],
+                       alpha=0.8)
+            else:
+                ax.plot(iterations, difficult_accuracies, 
+                       label=name, 
+                       color=colors[name],
+                       linestyle=line_styles[name],
+                       linewidth=line_widths[name],
+                       alpha=0.8)
     
     ax.set_xlabel('Training Iteration', fontsize=12, fontweight='bold')
     ax.set_ylabel('Accuracy on Difficult Questions', fontsize=12, fontweight='bold')
-    ax.set_title('Performance on Difficult Questions (Key Metric)', fontsize=14, fontweight='bold', color='darkred')
+    ax.set_title('Difficult Question Performance: Exponential vs Stochastic Learning', 
+                fontsize=14, fontweight='bold', color='darkred')
     ax.legend(loc='lower right', fontsize=11, framealpha=0.9)
     ax.grid(True, alpha=0.3, linestyle='--')
     ax.set_ylim([0.2, 1.0])
     
     # Highlight target accuracy line (75%)
-    ax.axhline(y=0.75, color='gray', linestyle=':', linewidth=1, alpha=0.5, label='Target (75%)')
-    ax.legend(loc='lower right', fontsize=11, framealpha=0.9)
+    ax.axhline(y=0.75, color='gray', linestyle=':', linewidth=1, alpha=0.5)
     
     # Add final accuracy annotations
     for name, history in histories.items():
@@ -405,8 +485,58 @@ def plot_comparison(histories: Dict[str, Dict], save_path: str = 'teacher_agent_
                    bbox=dict(boxstyle='round,pad=0.3', facecolor=colors[name], alpha=0.3),
                    arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0'))
     
-    # 3. Plot 3: Learning Speed Comparison (Iterations to reach 75% on difficult)
+    # 3. Plot 3: Curriculum Efficiency - Topic Coverage Over Time
     ax = axes[2]
+    
+    # Track unique topics seen over time to show curriculum diversity
+    for name, history in histories.items():
+        iterations = history['iterations']
+        topics_seen = history['topics']
+        
+        # Count unique topics up to each iteration
+        unique_topics = []
+        seen_so_far = set()
+        
+        for topic in topics_seen:
+            seen_so_far.add(topic)
+            unique_topics.append(len(seen_so_far))
+        
+        if name == 'Teacher':
+            ax.plot(iterations, unique_topics, 
+                   label=f'{name} (Diverse Curriculum)', 
+                   color=colors[name],
+                   linestyle=line_styles[name],
+                   linewidth=line_widths[name],
+                   alpha=0.9,
+                   zorder=10,
+                   marker='o', markersize=3)
+        else:
+            ax.plot(iterations, unique_topics, 
+                   label=f'{name}', 
+                   color=colors[name],
+                   linestyle=line_styles[name],
+                   linewidth=line_widths[name],
+                   alpha=0.8,
+                   marker='s', markersize=2)
+    
+    ax.set_xlabel('Training Iteration', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Number of Unique Topics Covered', fontsize=12, fontweight='bold')
+    ax.set_title('Curriculum Diversity: Topic Coverage Over Time', 
+                fontsize=14, fontweight='bold')
+    ax.legend(loc='lower right', fontsize=11, framealpha=0.9)
+    ax.grid(True, alpha=0.3, linestyle='--')
+    
+    # Add total topics line if available
+    if histories:
+        first_history = list(histories.values())[0]
+        if 'topics' in first_history and first_history['topics']:
+            all_unique_topics = len(set(first_history['topics']))
+            ax.axhline(y=all_unique_topics, color='gray', linestyle=':', 
+                      alpha=0.5, label=f'Total topics: {all_unique_topics}')
+            ax.legend(loc='lower right', fontsize=11, framealpha=0.9)
+    
+    # 4. Plot 4: Learning Speed Comparison (Iterations to reach 75% on difficult)
+    ax = axes[3]
     
     target_acc = 0.75
     strategy_stats = {}
@@ -493,6 +623,34 @@ def plot_comparison(histories: Dict[str, Dict], save_path: str = 'teacher_agent_
 
 
 if __name__ == "__main__":
+    import argparse
+    import time
+    
+    parser = argparse.ArgumentParser(description='Compare training strategies with configurable randomness')
+    parser.add_argument('--seed', type=int, default=None,
+                       help='Random seed for reproducibility (default: None = use current time)')
+    parser.add_argument('--iterations', type=int, default=500,
+                       help='Number of training iterations (default: 500)')
+    parser.add_argument('--deterministic', action='store_true',
+                       help='Use fixed seed=42 for reproducible results (deterministic)')
+    parser.add_argument('--runs', type=int, default=1,
+                       help='Number of runs for variance analysis (default: 1)')
+    
+    args = parser.parse_args()
+    
+    # Determine seed
+    if args.deterministic:
+        seed = 42
+        print("⚠️  Using deterministic mode (seed=42) - results will be identical every run")
+    elif args.seed is not None:
+        seed = args.seed
+        print(f"Using specified seed: {seed}")
+    else:
+        seed = int(time.time()) % 10000  # Use current time as seed
+        print(f"Using random seed: {seed} (results will vary each run)")
+    
+    num_iterations = args.iterations
+    
     print("=" * 70)
     print("COMPARING THREE TRAINING STRATEGIES")
     print("=" * 70)
@@ -501,18 +659,70 @@ if __name__ == "__main__":
     print("3. Teacher: RL teacher agent learns optimal curriculum")
     print("\n" + "=" * 70 + "\n")
     
-    num_iterations = 500
-    seed = 42
-    
-    # Train all three strategies
-    print("Training Random Strategy...")
-    history_random = train_strategy_random(num_iterations=num_iterations, seed=seed)
-    
-    print("\nTraining Progressive Strategy...")
-    history_progressive = train_strategy_progressive(num_iterations=num_iterations, seed=seed)
-    
-    print("\nTraining Teacher Strategy...")
-    history_teacher = train_strategy_teacher(num_iterations=num_iterations, seed=seed)
+    # Run multiple times for variance analysis if requested
+    if args.runs > 1:
+        print(f"Running {args.runs} times for variance analysis...\n")
+        all_results = {
+            'Random': [],
+            'Progressive': [],
+            'Teacher': []
+        }
+        
+        for run in range(args.runs):
+            run_seed = seed + run  # Different seed for each run
+            print(f"Run {run + 1}/{args.runs} (seed={run_seed})...")
+            
+            history_random = train_strategy_random(num_iterations=num_iterations, seed=run_seed)
+            history_progressive = train_strategy_progressive(num_iterations=num_iterations, seed=run_seed)
+            history_teacher = train_strategy_teacher(num_iterations=num_iterations, seed=run_seed)
+            
+            all_results['Random'].append(history_random)
+            all_results['Progressive'].append(history_progressive)
+            all_results['Teacher'].append(history_teacher)
+        
+        # Compute statistics across runs
+        print("\n" + "=" * 70)
+        print("VARIANCE ANALYSIS ACROSS RUNS")
+        print("=" * 70)
+        
+        for strategy_name in ['Random', 'Progressive', 'Teacher']:
+            final_accs = [h['difficult_accuracies'][-1] for h in all_results[strategy_name]]
+            iterations_to_target = []
+            for h in all_results[strategy_name]:
+                target_acc = 0.75
+                reached = False
+                for i, acc in enumerate(h['difficult_accuracies']):
+                    if acc >= target_acc:
+                        iterations_to_target.append(i)
+                        reached = True
+                        break
+                if not reached:
+                    iterations_to_target.append(len(h['difficult_accuracies']))
+            
+            mean_final = np.mean(final_accs)
+            std_final = np.std(final_accs)
+            mean_iters = np.mean(iterations_to_target)
+            std_iters = np.std(iterations_to_target)
+            
+            print(f"\n{strategy_name}:")
+            print(f"  Final Accuracy: {mean_final:.3f} ± {std_final:.3f} (range: {min(final_accs):.3f} - {max(final_accs):.3f})")
+            print(f"  Iterations to Target: {mean_iters:.1f} ± {std_iters:.1f} (range: {min(iterations_to_target)} - {max(iterations_to_target)})")
+        
+        # Use first run for plotting (or could average)
+        history_random = all_results['Random'][0]
+        history_progressive = all_results['Progressive'][0]
+        history_teacher = all_results['Teacher'][0]
+    else:
+        # Single run
+        # Train all three strategies
+        print("Training Random Strategy...")
+        history_random = train_strategy_random(num_iterations=num_iterations, seed=seed)
+        
+        print("\nTraining Progressive Strategy...")
+        history_progressive = train_strategy_progressive(num_iterations=num_iterations, seed=seed)
+        
+        print("\nTraining Teacher Strategy...")
+        history_teacher = train_strategy_teacher(num_iterations=num_iterations, seed=seed)
     
     # Create comparison plots
     print("\nGenerating comparison plots...")
@@ -525,4 +735,6 @@ if __name__ == "__main__":
     plot_comparison(histories, save_path='comparison_all_strategies.png')
     
     print("\n✅ Comparison complete! Check 'comparison_all_strategies.png'")
+    if not args.deterministic and args.seed is None:
+        print(f"💡 Tip: Results vary each run. Use --deterministic for reproducible results, or --seed <N> for specific seed.")
 

@@ -22,9 +22,9 @@ def train_teacher(num_iterations: int = 500, verbose: bool = True, seed: int = 4
         Tuple of (history dict, teacher agent, student agent)
     """
     # Initialize components
-    teacher = TeacherAgent(exploration_bonus=2.0)
-    student = MockStudentAgent(learning_rate=0.15, forgetting_rate=0.05, seed=seed)
     generator = MockTaskGenerator(seed=seed)
+    teacher = TeacherAgent(exploration_bonus=2.0, task_generator=generator)  # Pass generator for dynamic action space
+    student = MockStudentAgent(learning_rate=0.15, forgetting_rate=0.01, seed=seed)  # Reduced forgetting rate
     
     # Create evaluation set (held-out tasks for measuring student performance)
     eval_tasks = []

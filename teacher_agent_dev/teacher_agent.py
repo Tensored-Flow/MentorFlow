@@ -22,8 +22,17 @@ def compute_reward(
     """
     improvement = accuracy_after - accuracy_before
     
-    # Bonus for harder tasks (encourage pushing boundaries)
-    difficulty_bonus = {'easy': 0.5, 'medium': 1.0, 'hard': 2.0}[difficulty]
+    # Bonus for harder tasks (encourage pushing boundaries) - expanded for all 7 levels
+    difficulty_bonus_map = {
+        'trivial': 0.2,
+        'easy': 0.5,
+        'medium': 1.0,
+        'hard': 2.0,
+        'expert': 3.0,
+        'master': 4.0,
+        'grandmaster': 5.0
+    }
+    difficulty_bonus = difficulty_bonus_map.get(difficulty, 1.0)
     
     # Bonus for successful reviews (spaced repetition)
     review_bonus = 1.0 if (is_review and improvement > 0) else 0.0
@@ -38,7 +47,10 @@ class TeacherAgent(TeacherAgentInterface):
     """
     Teacher Agent using UCB (Upper Confidence Bound) bandit algorithm.
     
-    Action space: 5 topics × 3 difficulties × 2 (new vs review) = 30 actions
+    Action space: Dynamically determined from task generator
+    - Topics: From MockTaskGenerator (15 topics)
+    - Difficulties: From MockTaskGenerator (7 difficulties: trivial→grandmaster)
+    - Options: 2 (new vs review)
     
     UCB formula:
     UCB(a) = estimated_reward(a) + exploration_bonus × sqrt(log(total_pulls) / pulls(a))
@@ -46,20 +58,32 @@ class TeacherAgent(TeacherAgentInterface):
     Balances exploration (trying new actions) vs exploitation (using known-good actions).
     """
     
-    def __init__(self, exploration_bonus: float = 2.0):
+    def __init__(self, exploration_bonus: float = 2.0, task_generator=None):
         """
-        Initialize teacher agent.
+        Initialize teacher agent with dynamic action space.
         
         Args:
             exploration_bonus: Controls exploration vs exploitation balance.
                               Higher = more exploration (try new actions)
                               Lower = more exploitation (use known-good actions)
+            task_generator: Optional MockTaskGenerator to get topics/difficulties.
+                          If None, uses default expanded set.
         """
         self.exploration_bonus = exploration_bonus
         
-        # Define action space
-        self.topics = ['history', 'science', 'literature', 'geography', 'current_events']
-        self.difficulties = ['easy', 'medium', 'hard']
+        # Define action space dynamically
+        if task_generator:
+            self.topics = task_generator.get_available_topics()
+            self.difficulties = task_generator.get_available_difficulties()
+        else:
+            # Default expanded set
+            self.topics = [
+                'history', 'science', 'literature', 'geography', 'current_events',
+                'mathematics', 'programming', 'philosophy', 'art', 'music',
+                'biology', 'chemistry', 'physics', 'economics', 'psychology'
+            ]
+            self.difficulties = ['trivial', 'easy', 'medium', 'hard', 'expert', 'master', 'grandmaster']
+        
         self.review_options = [False, True]  # False = new, True = review
         
         # Create all action combinations
@@ -69,7 +93,7 @@ class TeacherAgent(TeacherAgentInterface):
             for diff in self.difficulties
             for review in self.review_options
         ]
-        self.num_actions = len(self.actions)  # Should be 30
+        self.num_actions = len(self.actions)  # Now 15 topics × 7 difficulties × 2 = 210 actions
         
         # Track statistics per action
         self.action_counts = np.zeros(self.num_actions, dtype=np.float64)
