@@ -6,6 +6,7 @@ Deployed on Hugging Face Spaces with GPU support
 import gradio as gr
 import sys
 import os
+import subprocess
 from pathlib import Path
 
 # Add project paths
@@ -13,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent / "teacher_agent_dev"))
 sys.path.insert(0, str(Path(__file__).parent / "student_agent_dev"))
 
-def run_comparison(iterations: int, seed: int, use_deterministic: bool, device: str, progress=gr.Progress()):
+def run_comparison(iterations: int, seed: int, use_deterministic: bool, device: str, progress=gr.Progress(track_tqdm=True)):
     """
     Run strategy comparison with LM Student.
     
@@ -25,18 +26,24 @@ def run_comparison(iterations: int, seed: int, use_deterministic: bool, device: 
         progress: Gradio progress tracker
     """
     
-    # Set device environment variable and modify compare_strategies to use it
+    # Set device environment variable for subprocess
+    # Check if CUDA is actually available before using
     if device == "cuda":
-        # Check if CUDA is actually available
         try:
             import torch
             if not torch.cuda.is_available():
-                return "⚠️ GPU requested but not available. Using CPU instead.", None
-        except:
-            pass
-        os.environ["CUDA_DEVICE"] = "cuda"
-    else:
-        os.environ["CUDA_DEVICE"] = "cpu"
+                device = "cpu"
+                if progress:
+                    progress(0.0, desc="⚠️ GPU not available, using CPU...")
+        except ImportError:
+            device = "cpu"
+            if progress:
+                progress(0.0, desc="⚠️ PyTorch not available, using CPU...")
+        except Exception:
+            device = "cpu"
+    
+    # Set environment variable for subprocess to pick up
+    os.environ["CUDA_DEVICE"] = device
     
     # Prepare command
     cmd = [
@@ -51,34 +58,57 @@ def run_comparison(iterations: int, seed: int, use_deterministic: bool, device: 
         cmd.extend(["--seed", str(int(seed))])
     
     try:
-        progress(0.1, desc="Starting comparison...")
+        if progress:
+            progress(0.1, desc="Starting comparison...")
+        
+        # Ensure environment variables are passed to subprocess
+        env = os.environ.copy()
+        env["CUDA_DEVICE"] = os.environ.get("CUDA_DEVICE", device)
         
         result = subprocess.run(
             cmd,
             cwd=str(Path(__file__).parent),
+            env=env,  # Pass environment variables
             capture_output=True,
             text=True,
             timeout=3600  # 1 hour timeout
         )
             
-            stdout_text = result.stdout
-            stderr_text = result.stderr
-            
-            # Combine outputs
-            full_output = f"=== STDOUT ===\n{stdout_text}\n\n=== STDERR ===\n{stderr_text}"
-            
+        stdout_text = result.stdout
+        stderr_text = result.stderr
+        
+        # Combine outputs
+        full_output = f"=== STDOUT ===\n{stdout_text}\n\n=== STDERR ===\n{stderr_text}"
+        
+        if progress:
             progress(0.9, desc="Processing results...")
-            
-            if result.returncode != 0:
-                return f"❌ Error occurred:\n{full_output}", None
-            
-            # Find output plot
-            plot_path = Path(__file__).parent / "teacher_agent_dev" / "comparison_all_strategies.png"
-            if plot_path.exists():
+        
+        if result.returncode != 0:
+            return f"❌ Error occurred:\n{full_output}", None
+        
+        # Find output plot (check multiple possible locations)
+        plot_paths = [
+            Path(__file__).parent / "teacher_agent_dev" / "comparison_all_strategies.png",
+            Path(__file__).parent / "comparison_all_strategies.png",
+            Path.cwd() / "teacher_agent_dev" / "comparison_all_strategies.png",
+        ]
+        
+        plot_path = None
+        for path in plot_paths:
+            if path.exists():
+                plot_path = path
+                break
+        
+        if plot_path:
+            if progress:
                 progress(1.0, desc="Complete!")
-                return f"✅ Comparison complete!\n\n{stdout_text}", str(plot_path)
-            else:
-                return f"⚠️ Plot not found, but output:\n\n{full_output}", None
+            return f"✅ Comparison complete!\n\n{stdout_text}", str(plot_path)
+        else:
+            # Return output even if plot not found (might still be useful)
+            error_msg = f"⚠️ Plot not found at expected locations.\n"
+            error_msg += f"Checked: {[str(p) for p in plot_paths]}\n\n"
+            error_msg += f"Output:\n{full_output}"
+            return error_msg, None
                 
     except subprocess.TimeoutExpired:
         return "❌ Timeout: Comparison took longer than 1 hour", None
