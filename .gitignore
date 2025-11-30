@@ -1,15 +1,39 @@
 # Python
 __pycache__/
 *.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
 venv/
-.env
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Models and outputs
+models/*.zip
+models/*.png
+models/*.npz
+*.pth
+*.pt
+*.h5
 
 # Node / Next.js
 node_modules/
 .next/
 out/
-dist/
 .env.local
+.env
 
 # RL training outputs
 checkpoints/
@@ -17,5 +41,12 @@ runs/
 artifacts/
 wandb/
 
+# Logs
+*.log
+
 # OS
 .DS_Store
+Thumbs.db
+
+# Temporary files
+CLEANUP_SUMMARY.md
