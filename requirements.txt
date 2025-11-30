@@ -15,6 +15,7 @@ seaborn>=0.12.0
 # App / API
 flask>=2.3.0
 gradio>=5.0.0
+flask-cors>=4.0.0
 
 # Optional: Progress bars / utils
 tqdm>=4.65.0

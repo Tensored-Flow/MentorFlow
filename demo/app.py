@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from flask import Flask, render_template, jsonify, request, session
+from flask import Flask, render_template, jsonify, request, session, send_file, abort
 from flask_cors import CORS
 import os
 import numpy as np
@@ -15,6 +15,7 @@ import json
 import threading
 import time
 import random
+import subprocess
 from typing import Any, Dict
 
 from tasks.task_generator import (
@@ -557,11 +558,54 @@ def get_families():
     return jsonify(families)
 
 
+@app.route('/api/compare/run', methods=['POST'])
+def run_strategy_comparison():
+    """
+    Run compare_strategies and expose the plot for the frontend.
+    Uses mock student + medium generator for speed/stability.
+    """
+    cmd = [
+        sys.executable,
+        "teacher_agent_dev/compare_strategies.py",
+        "--iterations", os.environ.get("COMPARE_ITERATIONS", "100"),
+        "--use-mock-student",
+        "--medium-generator",
+        "--resample-eval",
+        "--deterministic",
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(Path(__file__).parent.parent),
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        if result.returncode != 0:
+            return jsonify({
+                "error": "compare_strategies failed",
+                "stderr": result.stderr[-500:]
+            }), 500
+        return jsonify({
+            "status": "ok",
+            "plot_url": "/api/compare/plot",
+            "stdout": result.stdout[-1000:],  # tail for debugging
+        })
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "compare_strategies timed out"}), 504
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/compare/plot')
+def get_compare_plot():
+    """Serve the latest comparison plot if available."""
+    plot_path = Path(__file__).parent.parent / "comparison_all_strategies.png"
+    if not plot_path.exists():
+        abort(404)
+    return send_file(plot_path, mimetype="image/png")
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5050))
-    print("=" * 60)
-    print("TeachRL Demo Server")
-    print("=" * 60)
-    print(f"Open http://localhost:{port} in your browser")
-    print("=" * 60)
-    app.run(debug=True, port=port)
+    app.run(host="0.0.0.0", port=port, debug=False)
