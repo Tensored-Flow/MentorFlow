@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 
 // Point Next.js API routes to the Flask backend (demo/app.py).
-// Default to localhost:5050 where demo/app.py runs; override via FLASK_API_BASE_URL in env.
-const BACKEND_BASE_URL = process.env.FLASK_API_BASE_URL ?? "http://localhost:5050";
+// Default to the Render deployment; override via FLASK_API_BASE_URL in env.
+const BACKEND_BASE_URL = process.env.FLASK_API_BASE_URL ?? "https://mentorflow-0g4c.onrender.com";
 
 const parseJsonSafe = (payload: string) => {
   if (!payload) return null;
