@@ -1,0 +1,7 @@
+Train with eval logging summary
+total_timesteps: 20000
+train_steps_per_generation: 1000
+eval_problems: 100
+num_generations: 20
+final_accuracy: 0.2000
+max_accuracy: 0.3400

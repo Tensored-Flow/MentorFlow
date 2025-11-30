@@ -1,0 +1,8 @@
+Teacher training summary
+total_rounds: 12
+train_steps_per_round: 800
+final_eval_accuracy: 0.1950
+max_eval_accuracy: 0.2850
+heatmap: models/teacher_curriculum_heatmap.png
+overall_accuracy_plot: models/teacher_overall_accuracy.png
+round_accuracy_plot: models/teacher_round_accuracy.png

@@ -1,0 +1,6 @@
+Train with eval logging summary
+total_timesteps: 5000
+eval_every: 200
+eval_episodes: 100
+final_accuracy: 1.0000
+max_accuracy: 1.0000
